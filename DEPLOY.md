@@ -180,8 +180,9 @@ Cursor のチャットで次のように頼みます。
 
 **Environment Variables（環境変数）**
 
-- このアプリは **いまのところ環境変数を設定しなくても動きます**（ログイン・データはブラウザの localStorage を使用）
-- 何も追加せず、そのまま **Deploy** で進めて大丈夫です
+- 環境変数を**設定しない**場合：ログイン・データはブラウザの **localStorage** だけに保存され、**そのデバイスだけで**有効です。
+- **複数デバイスで同じデータ**を使いたい場合は、**Supabase** を用意し、`NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_ANON_KEY` を Vercel の Environment Variables に追加してください。手順は **SUPABASE.md** を参照してください。
+- どちらの場合も、そのまま **Deploy** で進めて大丈夫です。
 
 ### 2-4. デプロイ開始
 

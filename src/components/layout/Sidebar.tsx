@@ -71,7 +71,11 @@ export default function Sidebar() {
             </div>
           </div>
           <button
-            onClick={() => dispatch({ type: 'LOGOUT' })}
+            onClick={async () => {
+              const supabase = (await import('@/lib/supabase/client')).createSupabaseClient()
+              if (supabase) (await import('@/lib/supabase/sync')).signOutSupabase(supabase)
+              dispatch({ type: 'LOGOUT' })
+            }}
             className="mt-1 flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
           >
             <LogOut size={14} />
@@ -99,7 +103,11 @@ export default function Sidebar() {
           )
         })}
         <button
-          onClick={() => dispatch({ type: 'LOGOUT' })}
+          onClick={async () => {
+            const supabase = (await import('@/lib/supabase/client')).createSupabaseClient()
+            if (supabase) (await import('@/lib/supabase/sync')).signOutSupabase(supabase)
+            dispatch({ type: 'LOGOUT' })
+          }}
           className="flex-1 flex flex-col items-center py-2 text-xs font-medium text-gray-500"
         >
           <LogOut size={20} className="mb-0.5" />

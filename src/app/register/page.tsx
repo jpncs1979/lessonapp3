@@ -1,12 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Music } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { registerCredentials, isRegistered } from '@/lib/auth'
 import { getRoleLabel } from '@/lib/utils'
 import Button from '@/components/ui/Button'
+import { createSupabaseClient } from '@/lib/supabase/client'
+import { registerWithSupabase, isAppUserRegistered } from '@/lib/supabase/sync'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -14,6 +16,7 @@ export default function RegisterPage() {
   const router = useRouter()
   const { state, dispatch } = useApp()
   const users = state.users
+  const supabase = createSupabaseClient()
 
   const [selectedUserId, setSelectedUserId] = useState('')
   const [email, setEmail] = useState('')
@@ -21,9 +24,26 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [alreadyRegistered, setAlreadyRegistered] = useState(false)
+  const [checkingRegistered, setCheckingRegistered] = useState(false)
 
   const selectedUser = users.find((u) => u.id === selectedUserId)
-  const alreadyRegistered = selectedUserId ? isRegistered(selectedUserId) : false
+
+  useEffect(() => {
+    if (!selectedUserId) {
+      setAlreadyRegistered(false)
+      return
+    }
+    if (supabase) {
+      setCheckingRegistered(true)
+      isAppUserRegistered(supabase, selectedUserId).then((v) => {
+        setAlreadyRegistered(v)
+        setCheckingRegistered(false)
+      })
+    } else {
+      setAlreadyRegistered(isRegistered(selectedUserId))
+    }
+  }, [selectedUserId, supabase])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -53,6 +73,16 @@ export default function RegisterPage() {
 
     setLoading(true)
     try {
+      if (supabase) {
+        const { error: err } = await registerWithSupabase(supabase, selectedUser.id, emailTrim, password)
+        if (err) {
+          setError(err.message || '登録に失敗しました。もう一度お試しください。')
+          setLoading(false)
+          return
+        }
+        router.push('/calendar')
+        return
+      }
       await registerCredentials(selectedUser.id, emailTrim, password)
       dispatch({ type: 'UPDATE_USER_EMAIL', payload: { id: selectedUser.id, email: emailTrim } })
       dispatch({ type: 'LOGIN', payload: { ...selectedUser, email: emailTrim } })
@@ -105,18 +135,30 @@ export default function RegisterPage() {
             </div>
 
             {selectedUserId && alreadyRegistered && (
-              <Button
-                type="button"
-                className="w-full"
-                onClick={() => {
-                  if (selectedUser) {
-                    dispatch({ type: 'LOGIN', payload: selectedUser })
-                    router.push('/calendar')
-                  }
-                }}
-              >
-                ログイン
-              </Button>
+              <>
+                {supabase ? (
+                  <Button
+                    type="button"
+                    className="w-full"
+                    onClick={() => router.push('/login')}
+                  >
+                    ログイン（メール・パスワード）
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    className="w-full"
+                    onClick={() => {
+                      if (selectedUser) {
+                        dispatch({ type: 'LOGIN', payload: selectedUser })
+                        router.push('/calendar')
+                      }
+                    }}
+                  >
+                    ログイン
+                  </Button>
+                )}
+              </>
             )}
 
             {selectedUserId && !alreadyRegistered && (

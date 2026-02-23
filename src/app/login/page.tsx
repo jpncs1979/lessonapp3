@@ -7,10 +7,13 @@ import { Music } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { validateLogin, isEmailConfirmed } from '@/lib/auth'
 import Button from '@/components/ui/Button'
+import { createSupabaseClient } from '@/lib/supabase/client'
+import { signInWithSupabase } from '@/lib/supabase/sync'
 
 export default function LoginPage() {
   const router = useRouter()
   const { state, dispatch } = useApp()
+  const supabase = createSupabaseClient()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -31,6 +34,17 @@ export default function LoginPage() {
 
     setLoading(true)
     try {
+      if (supabase) {
+        const { user: appUser, error: signInError } = await signInWithSupabase(supabase, emailTrim, password)
+        if (signInError) {
+          setError(signInError.message || 'メールアドレスまたはパスワードが正しくありません')
+          setLoading(false)
+          return
+        }
+        if (appUser) dispatch({ type: 'LOGIN', payload: appUser })
+        router.push('/calendar')
+        return
+      }
       const userId = await validateLogin(emailTrim, password)
       if (!userId) {
         setError('メールアドレスまたはパスワードが正しくありません')
@@ -82,8 +96,8 @@ export default function LoginPage() {
           <p className="text-sm text-gray-500 mt-1">先生が登録した方のみログインできます</p>
         </div>
 
-        {/* 生徒：名前選択だけでログイン（アドレス確認済みのみ） */}
-        {studentsWithConfirmed.length > 0 && (
+        {/* 生徒：名前選択だけでログイン（Supabase 未使用時のみ・アドレス確認済み） */}
+        {!supabase && studentsWithConfirmed.length > 0 && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-4">
             <h2 className="text-base font-semibold text-gray-900 mb-1">生徒の方は名前でログイン</h2>
             <p className="text-xs text-gray-500 mb-4">メールアドレス確認済みの方は名前を選ぶだけで入れます</p>

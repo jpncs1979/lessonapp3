@@ -1,12 +1,20 @@
 'use client'
 
-import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react'
+import React, { createContext, useContext, useReducer, useEffect, ReactNode, useRef } from 'react'
 import {
   User, LessonSlot, DaySettings, AccompanistAvailability,
   LessonStatus, EndTimeMode, Student, Accompanist, WeeklyMaster
 } from '@/types'
 import { generateId, calcProvisionalDeadline } from '@/lib/utils'
 import { today, formatDateToYYYYMMDD } from '@/lib/schedule'
+import { createSupabaseClient } from '@/lib/supabase/client'
+import {
+  getAppUserFromSession,
+  fetchAppUsers,
+  fetchFullState,
+  persistState,
+  signOutSupabase,
+} from '@/lib/supabase/sync'
 
 // ─── デモ用初期データ ───────────────────────────────────────────────
 
@@ -138,7 +146,7 @@ function generateDemoSlots(settings: DaySettings[], today: string): LessonSlot[]
 
 // ─── State & Actions ───────────────────────────────────────────────
 
-interface AppState {
+export interface AppState {
   currentUser: User | null
   users: User[]
   students: Student[]
@@ -162,6 +170,7 @@ type Action =
   | { type: 'CONFIRM_ACCOMPANIED'; payload: { slotId: string } }
   | { type: 'EXPIRE_PROVISIONAL' }
   | { type: 'LOAD_STATE'; payload: AppState }
+  | { type: 'MERGE_REMOTE_STATE'; payload: Partial<Pick<AppState, 'users' | 'students' | 'accompanists' | 'daySettings' | 'lessons' | 'weekly_masters' | 'accompanistAvailabilities'>> }
   | { type: 'ADD_STUDENT'; payload: Student }
   | { type: 'UPDATE_STUDENT'; payload: { id: string; name: string } }
   | { type: 'DELETE_STUDENT'; payload: string }
@@ -272,6 +281,20 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'LOAD_STATE':
       return action.payload
+
+    case 'MERGE_REMOTE_STATE': {
+      const p = action.payload
+      return {
+        ...state,
+        ...(p.users != null && { users: p.users }),
+        ...(p.students != null && { students: p.students }),
+        ...(p.accompanists != null && { accompanists: p.accompanists }),
+        ...(p.daySettings != null && { daySettings: p.daySettings }),
+        ...(p.lessons != null && { lessons: p.lessons }),
+        ...(p.weekly_masters != null && { weekly_masters: p.weekly_masters }),
+        ...(p.accompanistAvailabilities != null && { accompanistAvailabilities: p.accompanistAvailabilities }),
+      }
+    }
 
     case 'ADD_STUDENT': {
       const next = [...state.students, action.payload]
@@ -418,9 +441,64 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [state, dispatch] = useReducer(reducer, initialState)
   const hasRestoredRef = React.useRef(false)
+  const skipPersistRef = useRef(false)
+  const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const supabaseRef = useRef(createSupabaseClient())
 
-  // クライアントでマウント後に localStorage から復元（SSR/クライアントで同一の初期状態にしハイドレーションエラーを防ぐ）
+  // Supabase 利用時: セッション復元と名簿/データ取得
   useEffect(() => {
+    const supabase = supabaseRef.current
+    if (!supabase) {
+      hasRestoredRef.current = true
+      return
+    }
+    let mounted = true
+    ;(async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!mounted) return
+      if (session?.user) {
+        const appUser = await getAppUserFromSession(supabase)
+        if (appUser && mounted) {
+          dispatch({ type: 'LOGIN', payload: appUser })
+          skipPersistRef.current = true
+          const full = await fetchFullState(supabase)
+          if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+        }
+      } else {
+        const users = await fetchAppUsers(supabase)
+        if (mounted && users.length) {
+          const students = users.filter((u) => u.role === 'student').map((u) => ({ id: u.id, name: u.name }))
+          const accompanists = users.filter((u) => u.role === 'accompanist').map((u) => ({ id: u.id, name: u.name }))
+          dispatch({ type: 'MERGE_REMOTE_STATE', payload: { users, students, accompanists } })
+        }
+      }
+      hasRestoredRef.current = true
+    })()
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted || !supabase) return
+      if (event === 'SIGNED_OUT') {
+        dispatch({ type: 'LOGOUT' })
+        return
+      }
+      if (event === 'SIGNED_IN' && session?.user) {
+        const appUser = await getAppUserFromSession(supabase)
+        if (appUser) {
+          dispatch({ type: 'LOGIN', payload: appUser })
+          skipPersistRef.current = true
+          const full = await fetchFullState(supabase)
+          if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+        }
+      }
+    })
+    return () => {
+      mounted = false
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  // クライアントでマウント後に localStorage から復元（Supabase 未使用時）
+  useEffect(() => {
+    if (supabaseRef.current) return
     try {
       const stored = localStorage.getItem(STORAGE_KEY)
       if (stored) {
@@ -431,12 +509,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     hasRestoredRef.current = true
   }, [])
 
-  // LocalStorageに保存（復元試行後のみ保存し、初回の上書きを防ぐ）
+  // LocalStorage に保存（Supabase 未使用時）
   useEffect(() => {
-    if (!hasRestoredRef.current) return
+    if (supabaseRef.current || !hasRestoredRef.current) return
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
     } catch { /* ignore */ }
+  }, [state])
+
+  // Supabase 利用時: 状態変更をデバウンスして保存
+  useEffect(() => {
+    const supabase = supabaseRef.current
+    if (!supabase || !state.currentUser || !hasRestoredRef.current) return
+    if (skipPersistRef.current) {
+      skipPersistRef.current = false
+      return
+    }
+    if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current)
+    persistTimeoutRef.current = setTimeout(async () => {
+      persistTimeoutRef.current = null
+      await persistState(supabase, state)
+    }, 1500)
+    return () => {
+      if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current)
+    }
   }, [state])
 
   // 定期的に期限切れをチェック（1分ごと）
