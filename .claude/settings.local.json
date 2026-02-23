@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc --noEmit)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(cmd.exe /c \"wmic process where processid=960 get commandline 2>&1\")",
+      "Bash(cmd.exe /c \"start /B node_modules\\\\.bin\\\\next.cmd dev --port 3001 > next.log 2>&1\")",
+      "Bash(curl:*)",
+      "Bash(timeout 25 npx next dev:*)",
+      "Bash(netstat:*)",
+      "Bash(cmd.exe /c \"tasklist | findstr node.exe\")",
+      "Bash(cmd.exe /c \"for /f \"\"tokens=2\"\" %p in \\(''netstat -ano ^| findstr \"\":3000\"\"''\\) do @echo %p\")",
+      "Bash(cmd.exe /c \"taskkill /F /IM node.exe /T\")",
+      "Bash(where:*)",
+      "Bash(node --version:*)"
+    ]
+  }
+}

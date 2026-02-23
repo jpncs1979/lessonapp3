@@ -1,0 +1,180 @@
+'use client'
+
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { useApp } from '@/lib/store'
+import { generateTimeItems, getDaySummary, getDaysInMonth, today } from '@/lib/schedule'
+import { cn } from '@/lib/utils'
+
+const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
+
+export default function MonthCalendar() {
+  const router = useRouter()
+  const { state, getDaySettings, getLessonsForDate } = useApp()
+  const { currentUser } = state
+  const now = new Date()
+  const [year, setYear] = useState(now.getFullYear())
+  const [month, setMonth] = useState(now.getMonth() + 1)
+
+  const days = getDaysInMonth(year, month)
+  const firstDay = new Date(year, month - 1, 1).getDay() // 0=日
+
+  // 前月の末尾で埋める空白
+  const blanks = Array(firstDay).fill(null)
+  const todayStr = today()
+
+  const prevMonth = () => {
+    if (month === 1) { setMonth(12); setYear(y => y - 1) }
+    else setMonth(m => m - 1)
+  }
+  const nextMonth = () => {
+    if (month === 12) { setMonth(1); setYear(y => y + 1) }
+    else setMonth(m => m + 1)
+  }
+
+  const getDayInfo = (dateStr: string) => {
+    const settings = getDaySettings(dateStr)
+    if (!settings.isLessonDay) return null
+    const lessons = getLessonsForDate(dateStr)
+    const items = generateTimeItems(dateStr, settings, lessons)
+    return getDaySummary(items)
+  }
+
+  /** 日付の表示ラベル（役割別） */
+  const getDayLabel = (dateStr: string): { text: string; className?: string } => {
+    const lessons = getLessonsForDate(dateStr)
+    const dayInfo = getDayInfo(dateStr)
+    const isLessonDay = !!dayInfo
+
+    if (!currentUser) {
+      if (!isLessonDay) return { text: '不可', className: 'text-gray-300' }
+      return { text: `レッスン可${dayInfo!.available}/${dayInfo!.total}`, className: 'text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium' }
+    }
+
+    if (currentUser.role === 'student') {
+      if (!isLessonDay) return { text: '不可', className: 'text-gray-300' }
+      const myLessons = lessons.filter((l) => (l.status === 'confirmed' || l.status === 'pending') && l.studentId === currentUser.id)
+      if (myLessons.length > 0) return { text: 'レッスン', className: 'text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium' }
+      return { text: '空きあり', className: 'text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium' }
+    }
+
+    if (currentUser.role === 'teacher') {
+      if (!isLessonDay) return { text: '不可', className: 'text-gray-300' }
+      const confirmedOrPending = lessons.filter((l) => l.status === 'confirmed' || l.status === 'pending')
+      const n = confirmedOrPending.length
+      if (n > 0) return { text: `レッスンあり ${n}`, className: 'text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium' }
+      return { text: '空き', className: 'text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium' }
+    }
+
+    if (currentUser.role === 'accompanist') {
+      const myAccompanistLessons = lessons.filter((l) => (l.status === 'confirmed' || l.status === 'pending') && l.accompanistId === currentUser.id)
+      if (myAccompanistLessons.length > 0) return { text: '大和田レッスンあり', className: 'text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded-full font-medium' }
+      return { text: 'なし', className: 'text-gray-300' }
+    }
+
+    return { text: '', className: '' }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+      {/* ヘッダー */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+        <button onClick={prevMonth} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+          <ChevronLeft size={18} className="text-gray-600" />
+        </button>
+        <h2 className="text-base font-semibold text-gray-900">
+          {year}年 {month}月
+        </h2>
+        <button onClick={nextMonth} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+          <ChevronRight size={18} className="text-gray-600" />
+        </button>
+      </div>
+
+      {/* 曜日ヘッダー */}
+      <div className="grid grid-cols-7 border-b border-gray-100">
+        {WEEKDAYS.map((w, i) => (
+          <div
+            key={w}
+            className={cn(
+              'py-2 text-center text-xs font-medium',
+              i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-gray-500'
+            )}
+          >
+            {w}
+          </div>
+        ))}
+      </div>
+
+      {/* 日付グリッド */}
+      <div className="grid grid-cols-7">
+        {blanks.map((_, i) => (
+          <div key={`blank-${i}`} className="min-h-[72px] border-b border-r border-gray-50 last:border-r-0" />
+        ))}
+
+        {days.map((dateStr, i) => {
+          const dayNum = new Date(dateStr + 'T00:00:00').getDate()
+          const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay()
+          const isToday = dateStr === todayStr
+          const isPast = dateStr < todayStr
+          const col = (i + firstDay) % 7
+
+          const label = getDayLabel(dateStr)
+
+          return (
+            <div
+              key={dateStr}
+              onClick={() => router.push(`/day/${dateStr}`)}
+              className={cn(
+                'min-h-[72px] p-1.5 border-b border-r border-gray-50 cursor-pointer transition-colors',
+                col === 6 && 'border-r-0',
+                isToday ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50',
+                isPast && 'opacity-60'
+              )}
+            >
+              {/* 日付番号 */}
+              <div className="flex items-center justify-center mb-1">
+                <span
+                  className={cn(
+                    'w-7 h-7 flex items-center justify-center rounded-full text-sm font-medium',
+                    isToday
+                      ? 'bg-indigo-600 text-white'
+                      : col === 0
+                      ? 'text-red-500'
+                      : col === 6
+                      ? 'text-blue-500'
+                      : 'text-gray-700'
+                  )}
+                >
+                  {dayNum}
+                </span>
+              </div>
+
+              {/* 日付ラベル（役割別） */}
+              <div className="text-center">
+                {label.text && (
+                  <span className={cn('text-center inline-block', label.className)}>
+                    {label.text}
+                  </span>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* 凡例（役割により表示が異なるため簡易表示） */}
+      <div className="flex items-center gap-4 px-5 py-3 bg-gray-50 text-xs text-gray-500">
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full bg-emerald-400" />空き・空きあり
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full bg-indigo-400" />レッスンあり
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full bg-gray-300" />不可・なし
+        </span>
+      </div>
+    </div>
+  )
+}
