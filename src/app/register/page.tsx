@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Music } from 'lucide-react'
 import { useApp } from '@/lib/store'
@@ -33,10 +32,7 @@ export default function RegisterPage() {
       setError('名前を選択してください')
       return
     }
-    if (alreadyRegistered) {
-      setError('このアカウントは登録済みです。ログイン画面からログインしてください。')
-      return
-    }
+    if (alreadyRegistered) return
     const emailTrim = email.trim()
     if (!emailTrim) {
       setError('メールアドレスを入力してください')
@@ -75,13 +71,13 @@ export default function RegisterPage() {
             <Music size={32} className="text-white" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900">レッスンスケジューラー</h1>
-          <p className="text-sm text-gray-500 mt-1">初回登録</p>
+          <p className="text-sm text-gray-500 mt-1">名前を選択して入る</p>
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">名前を選択し、メールとパスワードを設定</h2>
+          <h2 className="text-base font-semibold text-gray-900 mb-2">名前を選択</h2>
           <p className="text-xs text-gray-500 mb-4">
-            先生が名簿に登録した方のみ登録できます。初回のみこの画面で設定してください。
+            登録がない場合はメール・パスワードを設定して登録。すでに登録済みの場合はそのまま入れます。
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -109,12 +105,18 @@ export default function RegisterPage() {
             </div>
 
             {selectedUserId && alreadyRegistered && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
-                このアカウントは登録済みです。
-                <Link href="/login" className="block mt-2 text-indigo-600 font-medium hover:underline">
-                  ログイン画面へ →
-                </Link>
-              </div>
+              <Button
+                type="button"
+                className="w-full"
+                onClick={() => {
+                  if (selectedUser) {
+                    dispatch({ type: 'LOGIN', payload: selectedUser })
+                    router.push('/calendar')
+                  }
+                }}
+              >
+                ログイン
+              </Button>
             )}
 
             {selectedUserId && !alreadyRegistered && (
@@ -159,17 +161,11 @@ export default function RegisterPage() {
 
             {selectedUserId && !alreadyRegistered && (
               <Button type="submit" disabled={loading} className="w-full">
-                {loading ? '登録中...' : '登録してログイン'}
+                {loading ? '登録中...' : '登録する'}
               </Button>
             )}
           </form>
         </div>
-
-        <p className="text-center mt-4">
-          <Link href="/login" className="text-sm text-indigo-600 hover:underline">
-            すでに登録済みの方はログイン
-          </Link>
-        </p>
       </div>
     </div>
   )

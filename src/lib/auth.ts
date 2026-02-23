@@ -5,14 +5,16 @@
 
 const CREDENTIALS_KEY = 'lessonapp_credentials'
 
-export type StoredCredentials = Record<string, { email: string; passwordHash: string }>
+export type CredentialEntry = { email: string; passwordHash: string; emailConfirmed?: boolean }
+export type StoredCredentials = Record<string, CredentialEntry>
 
 function getStorage(): StoredCredentials {
   if (typeof window === 'undefined') return {}
   try {
     const raw = localStorage.getItem(CREDENTIALS_KEY)
     if (!raw) return {}
-    return JSON.parse(raw) as StoredCredentials
+    const parsed = JSON.parse(raw) as Record<string, { email: string; passwordHash: string; emailConfirmed?: boolean }>
+    return parsed
   } catch {
     return {}
   }
@@ -41,6 +43,22 @@ export function isRegistered(userId: string): boolean {
   return !!cred?.email
 }
 
+/** 生徒がメールアドレス確認済みか（1回でもメール・パスワードでログイン済みなら true） */
+export function isEmailConfirmed(userId: string): boolean {
+  const cred = getStorage()[userId]
+  return !!cred?.emailConfirmed
+}
+
+/** メール・パスワードでログイン成功時に、そのユーザーを「アドレス確認済み」にする */
+export function setEmailConfirmed(userId: string): void {
+  const data = getStorage()
+  const c = data[userId]
+  if (c) {
+    data[userId] = { ...c, emailConfirmed: true }
+    setStorage(data)
+  }
+}
+
 /** メールでユーザーIDを検索 */
 export function getUserIdByEmail(email: string): string | null {
   const normalized = email.trim().toLowerCase()
@@ -58,10 +76,12 @@ export async function validateLogin(email: string, password: string): Promise<st
   const stored = getStorage()[userId]
   if (!stored) return null
   const hash = await hashPassword(password)
-  return hash === stored.passwordHash ? userId : null
+  if (hash !== stored.passwordHash) return null
+  setEmailConfirmed(userId)
+  return userId
 }
 
-/** 初回登録：ユーザーIDにメール・パスワードを紐付けて保存 */
+/** 初回登録：ユーザーIDにメール・パスワードを紐付けて保存（アドレス確認は初回メール・パスワードログイン時に付与） */
 export async function registerCredentials(
   userId: string,
   email: string,
@@ -70,6 +90,6 @@ export async function registerCredentials(
   const data = getStorage()
   const emailNorm = email.trim()
   const passwordHash = await hashPassword(password)
-  data[userId] = { email: emailNorm, passwordHash }
+  data[userId] = { email: emailNorm, passwordHash, emailConfirmed: false }
   setStorage(data)
 }

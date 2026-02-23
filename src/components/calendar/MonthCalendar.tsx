@@ -68,9 +68,8 @@ export default function MonthCalendar() {
     }
 
     if (currentUser.role === 'accompanist') {
-      const myAccompanistLessons = lessons.filter((l) => (l.status === 'confirmed' || l.status === 'pending') && l.accompanistId === currentUser.id)
-      if (myAccompanistLessons.length > 0) return { text: '大和田レッスンあり', className: 'text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded-full font-medium' }
-      return { text: 'なし', className: 'text-gray-300' }
+      // 伴奏者：赤枠で「私のレッスン」を示すため、同じ内容のテキストラベルは出さない
+      return { text: '', className: '' }
     }
 
     return { text: '', className: '' }
@@ -106,6 +105,14 @@ export default function MonthCalendar() {
         ))}
       </div>
 
+      {/* 伴奏者用：凡例（門下レッスン〇・私のレッスン赤枠） */}
+      {currentUser?.role === 'accompanist' && (
+        <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50/50 text-[10px] text-gray-500 flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5">
+          <span>〇 門下レッスンのある日</span>
+          <span>赤枠 伴奏付き（私のレッスン）のある日</span>
+        </div>
+      )}
+
       {/* 日付グリッド */}
       <div className="grid grid-cols-7">
         {blanks.map((_, i) => (
@@ -120,6 +127,15 @@ export default function MonthCalendar() {
           const col = (i + firstDay) % 7
 
           const label = getDayLabel(dateStr)
+          const dayInfo = getDayInfo(dateStr)
+          const isLessonDay = !!dayInfo
+          const lessonsOnDay = getLessonsForDate(dateStr)
+          const hasMyAccompaniment =
+            currentUser?.role === 'accompanist' &&
+            lessonsOnDay.some(
+              (l) =>
+                (l.status === 'confirmed' || l.status === 'pending') && l.accompanistId === currentUser.id
+            )
 
           return (
             <div
@@ -129,11 +145,12 @@ export default function MonthCalendar() {
                 'min-h-[72px] p-1.5 border-b border-r border-gray-50 cursor-pointer transition-colors',
                 col === 6 && 'border-r-0',
                 isToday ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50',
-                isPast && 'opacity-60'
+                isPast && 'opacity-60',
+                hasMyAccompaniment && 'ring-2 ring-red-400'
               )}
             >
               {/* 日付番号 */}
-              <div className="flex items-center justify-center mb-1">
+              <div className="flex flex-col items-center justify-center mb-1">
                 <span
                   className={cn(
                     'w-7 h-7 flex items-center justify-center rounded-full text-sm font-medium',
@@ -148,6 +165,10 @@ export default function MonthCalendar() {
                 >
                   {dayNum}
                 </span>
+                {/* 伴奏者用：門下レッスンのある日は小さい〇 */}
+                {currentUser?.role === 'accompanist' && isLessonDay && (
+                  <span className="text-[10px] text-gray-400 leading-none mt-0.5">〇</span>
+                )}
               </div>
 
               {/* 日付ラベル（役割別） */}

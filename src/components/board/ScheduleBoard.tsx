@@ -177,7 +177,7 @@ function BoardCard({
             {accompanist && (
               <div className="flex items-center gap-1.5 text-teal-700 ml-0.5">
                 <Music size={13} />
-                <span className="text-xs font-medium">伴奏：{accompanist.name}</span>
+                <span className="text-xs font-medium">伴奏付き：{accompanist.name}</span>
               </div>
             )}
 

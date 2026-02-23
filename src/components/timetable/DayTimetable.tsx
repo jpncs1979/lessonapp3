@@ -42,7 +42,7 @@ export default function DayTimetable({ date }: DayTimetableProps) {
 
   const handleSlotClick = (slot: LessonSlot) => {
     if (slot.status === 'break' || slot.status === 'lunch') return
-    // 先生: 不可枠 ⇔ レッスン可
+    // 先生: 不可枠は1タップでレッスン可に。空き枠・確定枠はモーダルで生徒・伴奏者を指定／変更
     if (isTeacher) {
       if (slot.status === 'blocked') {
         const inState = lessons.some((l) => l.id === slot.id)
@@ -53,19 +53,10 @@ export default function DayTimetable({ date }: DayTimetableProps) {
         }
         return
       }
-      if (slot.status === 'available' && !slot.studentId) {
-        dispatch({
-          type: 'UPDATE_LESSON',
-          payload: {
-            id: slot.id,
-            status: 'blocked',
-            studentId: undefined,
-            accompanistId: undefined,
-            provisionalDeadline: undefined,
-          },
-        })
-        return
-      }
+      // available / confirmed のときはモーダルを開いて生徒・伴奏者を指定または変更
+      setSelectedSlot(slot)
+      setModalOpen(true)
+      return
     }
     // 伴奏者: 1タップで伴奏付きレッスン可のトグル、または個人レッスンに伴奏可を追加/解除
     if (isAccompanist && currentUser) {
@@ -347,7 +338,7 @@ function TimeSlotRow({
             {accompanist && (
               <p className="text-sm text-teal-700 mt-0.5 flex items-center gap-1">
                 <Music size={12} />
-                伴奏：{accompanist.name}
+                伴奏付き：{accompanist.name}
               </p>
             )}
             {slot.status === 'pending' && slot.provisionalDeadline && (

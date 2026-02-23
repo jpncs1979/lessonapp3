@@ -12,7 +12,7 @@ export default function Home() {
     if (state.currentUser) {
       router.push('/calendar')
     } else {
-      router.push('/login')
+      router.push('/register')
     }
   }, [state.currentUser, router])
 

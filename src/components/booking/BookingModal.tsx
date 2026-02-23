@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Clock, User, Music, AlertCircle, Check } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
@@ -23,6 +23,15 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
   const [submitted, setSubmitted] = useState(false)
   const [assignStudentId, setAssignStudentId] = useState<string>('')
   const [assignAccompanistId, setAssignAccompanistId] = useState<string>('')
+  const [assignError, setAssignError] = useState('')
+
+  useEffect(() => {
+    if (slot) {
+      setAssignStudentId(slot.studentId || '')
+      setAssignAccompanistId(slot.accompanistId || '')
+      setAssignError('')
+    }
+  }, [slot?.id, slot?.studentId, slot?.accompanistId])
 
   if (!slot || !currentUser) return null
 
@@ -32,6 +41,8 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
 
   const availabilities: AccompanistAvailability[] = getAvailabilitiesForSlot(slot.id)
   const accompanistUsers = availabilities.map((a) => getUserById(a.accompanistId)).filter(Boolean)
+  const students = state.users.filter((u) => u.role === 'student')
+  const accompanists = state.users.filter((u) => u.role === 'accompanist')
 
   // 前後の確定枠にいる伴奏者＝連続で対応可能（推奨）
   const settingsForDate = getDaySettings(slot.date)
@@ -54,7 +65,14 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
   const provisionalHours = settings?.provisionalHours || 24
 
   const handleBook = () => {
-    if (!isStudent) return
+    if (!isStudent || !currentUser) return
+    const otherOnSameDay = lessonsForDate.some(
+      (l) => l.id !== slot.id && (l.status === 'confirmed' || l.status === 'pending') && l.studentId === currentUser.id
+    )
+    if (otherOnSameDay) {
+      setAssignError('同じ日にすでにレッスンが入っています。1日1回までです。')
+      return
+    }
     const acc = withAccompanist ? selectedAccompanist : undefined
 
     dispatch({
@@ -94,10 +112,16 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
     onClose()
   }
 
-  const students = state.users.filter((u) => u.role === 'student')
-
   const handleTeacherAssign = () => {
     if (!assignStudentId) return
+    const otherOnSameDay = lessonsForDate.some(
+      (l) => l.id !== slot.id && (l.status === 'confirmed' || l.status === 'pending') && l.studentId === assignStudentId
+    )
+    if (otherOnSameDay) {
+      setAssignError('この生徒は同じ日にすでにレッスンが入っています。1日1回までです。')
+      return
+    }
+    setAssignError('')
     dispatch({
       type: 'UPDATE_LESSON',
       payload: {
@@ -171,6 +195,10 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
         </div>
       </div>
 
+      {assignError && (
+        <p className="mb-4 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{assignError}</p>
+      )}
+
       {/* 予約済み情報 */}
       {(slot.status === 'pending' || slot.status === 'confirmed') && (
         <div className="mb-4 space-y-2">
@@ -222,9 +250,49 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
             </>
           )}
           {slot.status === 'confirmed' && (
-            <Button variant="danger" className="w-full" onClick={handleCancel}>
-              予約をキャンセル
-            </Button>
+            <>
+              <div className="mb-4 p-3 bg-indigo-50 rounded-xl">
+                <p className="text-xs font-medium text-indigo-600 mb-2">生徒・伴奏者を変更</p>
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-xs text-gray-600 mb-1">生徒</p>
+                    <select
+                      value={assignStudentId}
+                      onChange={(e) => setAssignStudentId(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    >
+                      <option value="">選択してください</option>
+                      {students.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-600 mb-1">伴奏者（任意）</p>
+                    <select
+                      value={assignAccompanistId}
+                      onChange={(e) => setAssignAccompanistId(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                    >
+                      <option value="">個人レッスン</option>
+                      {accompanists.map((acc) => (
+                        <option key={acc.id} value={acc.id}>{acc.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <Button
+                    className="w-full"
+                    onClick={handleTeacherAssign}
+                    disabled={!assignStudentId}
+                  >
+                    変更を反映
+                  </Button>
+                </div>
+              </div>
+              <Button variant="danger" className="w-full" onClick={handleCancel}>
+                予約をキャンセル
+              </Button>
+            </>
           )}
           {slot.status === 'available' && (
             <>
@@ -249,10 +317,11 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
                 >
                   <option value="">個人レッスン</option>
-                  {accompanistUsers.map((acc) => acc && (
-                    <option key={acc.id} value={acc.id}>{acc.name} 伴奏付き</option>
+                  {accompanists.map((acc) => (
+                    <option key={acc.id} value={acc.id}>{acc.name}</option>
                   ))}
                 </select>
+                <p className="text-xs text-gray-400 mt-1">名簿に登録した伴奏者から選択できます</p>
               </div>
               <Button
                 className="w-full"
@@ -272,7 +341,13 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
       {/* ── 生徒のアクション ── */}
       {isStudent && slot.status === 'available' && (
         <div className="space-y-4">
-          {accompanistUsers.length === 0 ? (
+          {lessonsForDate.some(
+            (l) => l.id !== slot.id && (l.status === 'confirmed' || l.status === 'pending') && l.studentId === currentUser?.id
+          ) ? (
+            <p className="text-sm text-amber-700 bg-amber-50 px-3 py-3 rounded-xl">
+              この日はすでにレッスンが入っています。同じ日に複数は予約できません。
+            </p>
+          ) : accompanistUsers.length === 0 ? (
             <>
               <p className="text-sm text-gray-600">
                 この枠は伴奏者が「可」を出していないため、個人レッスンのみ予約できます。
