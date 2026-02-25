@@ -30,6 +30,13 @@ export default function RegisterPage() {
 
   const selectedUser = users.find((u) => u.id === selectedUserId)
 
+  // すでにログイン済み（セッション復元など）ならカレンダーへ
+  useEffect(() => {
+    if (state.currentUser) {
+      router.push('/calendar')
+    }
+  }, [state.currentUser, router])
+
   useEffect(() => {
     if (!selectedUserId) {
       setAlreadyRegistered(false)
