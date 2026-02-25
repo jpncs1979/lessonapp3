@@ -9,12 +9,13 @@ export default function Home() {
   const { state } = useApp()
 
   useEffect(() => {
+    if (!state.sessionRestoreDone) return
     if (state.currentUser) {
       router.push('/calendar')
     } else {
       router.push('/register')
     }
-  }, [state.currentUser, router])
+  }, [state.sessionRestoreDone, state.currentUser, router])
 
   return (
     <div className="min-h-screen flex items-center justify-center">

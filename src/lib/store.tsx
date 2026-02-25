@@ -148,6 +148,7 @@ function generateDemoSlots(settings: DaySettings[], today: string): LessonSlot[]
 
 export interface AppState {
   currentUser: User | null
+  sessionRestoreDone: boolean
   users: User[]
   students: Student[]
   accompanists: Accompanist[]
@@ -181,6 +182,7 @@ type Action =
   | { type: 'REMOVE_WEEKLY_MASTER'; payload: { day_of_week: number; slot_index: number } }
   | { type: 'REPLACE_WEEKLY_MASTERS'; payload: WeeklyMaster[] }
   | { type: 'UPDATE_USER_EMAIL'; payload: { id: string; email: string } }
+  | { type: 'SESSION_RESTORE_DONE' }
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -188,6 +190,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, currentUser: action.payload }
     case 'LOGOUT':
       return { ...state, currentUser: null }
+    case 'SESSION_RESTORE_DONE':
+      return { ...state, sessionRestoreDone: true }
 
     case 'ADD_LESSON':
       return { ...state, lessons: [...state.lessons, action.payload] }
@@ -280,7 +284,7 @@ function reducer(state: AppState, action: Action): AppState {
       }
 
     case 'LOAD_STATE':
-      return action.payload
+      return { ...action.payload, sessionRestoreDone: action.payload.sessionRestoreDone ?? state.sessionRestoreDone }
 
     case 'MERGE_REMOTE_STATE': {
       const p = action.payload
@@ -392,6 +396,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const initialAccompanists = makeInitialAccompanists()
   const initialState: AppState = {
     currentUser: null,
+    sessionRestoreDone: false,
     users: studentsAndAccompanistsToUsers(initialStudents, initialAccompanists),
     students: initialStudents,
     accompanists: initialAccompanists,
@@ -450,6 +455,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const supabase = supabaseRef.current
     if (!supabase) {
       hasRestoredRef.current = true
+      dispatch({ type: 'SESSION_RESTORE_DONE' })
       return
     }
     let mounted = true
@@ -473,6 +479,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }
       hasRestoredRef.current = true
+      dispatch({ type: 'SESSION_RESTORE_DONE' })
     })()
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted || !supabase) return
@@ -507,6 +514,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     } catch { /* ignore */ }
     hasRestoredRef.current = true
+    dispatch({ type: 'SESSION_RESTORE_DONE' })
   }, [])
 
   // LocalStorage に保存（Supabase 未使用時）
