@@ -8,7 +8,7 @@ import { registerCredentials, isRegistered } from '@/lib/auth'
 import { getRoleLabel } from '@/lib/utils'
 import Button from '@/components/ui/Button'
 import { createSupabaseClient } from '@/lib/supabase/client'
-import { registerWithSupabase, isAppUserRegistered, getAppUserFromSession } from '@/lib/supabase/sync'
+import { registerWithSupabase, isAppUserRegistered, getAppUserFromSession, signInWithSupabase } from '@/lib/supabase/sync'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -26,14 +26,19 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false)
   const [alreadyRegistered, setAlreadyRegistered] = useState(false)
   const [checkingRegistered, setCheckingRegistered] = useState(false)
+  const [showLoginForm, setShowLoginForm] = useState(false)
 
   const selectedUser = users.find((u) => u.id === selectedUserId)
 
   useEffect(() => {
     if (!selectedUserId) {
       setAlreadyRegistered(false)
+      setShowLoginForm(false)
+      setError('')
       return
     }
+    setShowLoginForm(false)
+    setError('')
     if (supabase) {
       setCheckingRegistered(true)
       isAppUserRegistered(supabase, selectedUserId).then((v) => {
@@ -93,6 +98,43 @@ export default function RegisterPage() {
     }
   }
 
+  const handleLoginClick = async () => {
+    if (!selectedUser || !supabase) return
+    setError('')
+    const current = await getAppUserFromSession(supabase)
+    if (current?.id === selectedUser.id) {
+      dispatch({ type: 'LOGIN', payload: current })
+      router.push('/calendar')
+      return
+    }
+    setShowLoginForm(true)
+  }
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedUser || !supabase) return
+    setError('')
+    const emailTrim = email.trim()
+    if (!emailTrim || !password) {
+      setError('メールアドレスとパスワードを入力してください')
+      return
+    }
+    setLoading(true)
+    try {
+      const { user: appUser, error: signInError } = await signInWithSupabase(supabase, emailTrim, password)
+      if (signInError) {
+        setError(signInError.message || 'メールアドレスまたはパスワードが正しくありません')
+        setLoading(false)
+        return
+      }
+      if (appUser) dispatch({ type: 'LOGIN', payload: appUser })
+      router.push('/calendar')
+    } catch {
+      setError('ログインに失敗しました。')
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
@@ -137,27 +179,39 @@ export default function RegisterPage() {
             {selectedUserId && alreadyRegistered && (
               <>
                 {supabase ? (
-                  <div className="space-y-2">
-                    <Button
-                      type="button"
-                      className="w-full"
-                      onClick={async () => {
-                        if (!selectedUser) return
-                        const current = await getAppUserFromSession(supabase)
-                        if (current?.id === selectedUser.id) {
-                          dispatch({ type: 'LOGIN', payload: current })
-                          router.push('/calendar')
-                        } else {
-                          router.push('/login')
-                        }
-                      }}
-                    >
+                  showLoginForm ? (
+                    <form onSubmit={handleLoginSubmit} className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">メールアドレス</label>
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={(e) => { setEmail(e.target.value); setError('') }}
+                          placeholder="登録したメールアドレス"
+                          className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                          autoComplete="email"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">パスワード</label>
+                        <input
+                          type="password"
+                          value={password}
+                          onChange={(e) => { setPassword(e.target.value); setError('') }}
+                          placeholder="パスワード"
+                          className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                          autoComplete="current-password"
+                        />
+                      </div>
+                      <Button type="submit" disabled={loading} className="w-full">
+                        {loading ? 'ログイン中...' : 'ログイン'}
+                      </Button>
+                    </form>
+                  ) : (
+                    <Button type="button" className="w-full" onClick={handleLoginClick}>
                       ログイン
                     </Button>
-                    <p className="text-xs text-gray-500 text-center">
-                      この端末でログイン済みならそのまま入ります。未ログインの場合はメール・パスワード画面へ進みます。
-                    </p>
-                  </div>
+                  )
                 ) : (
                   <Button
                     type="button"
