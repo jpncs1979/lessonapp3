@@ -8,7 +8,7 @@ import { registerCredentials, isRegistered } from '@/lib/auth'
 import { getRoleLabel } from '@/lib/utils'
 import Button from '@/components/ui/Button'
 import { createSupabaseClient } from '@/lib/supabase/client'
-import { registerWithSupabase, isAppUserRegistered } from '@/lib/supabase/sync'
+import { registerWithSupabase, isAppUserRegistered, getAppUserFromSession } from '@/lib/supabase/sync'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -137,13 +137,27 @@ export default function RegisterPage() {
             {selectedUserId && alreadyRegistered && (
               <>
                 {supabase ? (
-                  <Button
-                    type="button"
-                    className="w-full"
-                    onClick={() => router.push('/login')}
-                  >
-                    ログイン（メール・パスワード）
-                  </Button>
+                  <div className="space-y-2">
+                    <Button
+                      type="button"
+                      className="w-full"
+                      onClick={async () => {
+                        if (!selectedUser) return
+                        const current = await getAppUserFromSession(supabase)
+                        if (current?.id === selectedUser.id) {
+                          dispatch({ type: 'LOGIN', payload: current })
+                          router.push('/calendar')
+                        } else {
+                          router.push('/login')
+                        }
+                      }}
+                    >
+                      ログイン
+                    </Button>
+                    <p className="text-xs text-gray-500 text-center">
+                      この端末でログイン済みならそのまま入ります。未ログインの場合はメール・パスワード画面へ進みます。
+                    </p>
+                  </div>
                 ) : (
                   <Button
                     type="button"

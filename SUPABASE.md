@@ -2,6 +2,23 @@
 
 環境変数に Supabase の URL と Anon Key を設定すると、名簿・レッスン・スケジュールが Supabase に保存され、**どのデバイスから開いても同じデータ**が表示されます。
 
+---
+
+## 用語の説明
+
+| 用語 | 意味 |
+|------|------|
+| **本番アプリ** | インターネットで公開しているアプリ。例：https://lessonapp3.vercel.app で開くサイト。Vercel にデプロイした「本番用」のサイトのこと。 |
+| **NEXT_PUBLIC_SUPABASE_URL** | **変数の名前**です。中に入れる**値**は、Supabase の画面で確認します。Supabase の **Project Settings** → **API** にある **Project URL**（`https://xxxx.supabase.co`）をコピーし、それを「NEXT_PUBLIC_SUPABASE_URL という名前の環境変数」として、.env.local や Vercel の Environment Variables に登録します。 |
+| **SQL の実行** | ここでは「Supabase の画面で、SQL Editor を開き、トリガー用の SQL を貼り付けて **Run** ボタンを押す」こと。 |
+| **登録の実行** | レッスンアプリの画面で、名前・メール・パスワードを入れて **「登録する」ボタンを押す**こと。 |
+
+**エラー確認の意味**  
+- **「SQL の実行時にエラー」** → Supabase の SQL Editor で Run したとき、下に赤いエラーメッセージが出なかったか。出ていれば、その内容を確認する必要があります。  
+- **「登録の実行時にエラー」** → アプリで「登録する」を押したときに、画面に「new row violates row-level security policy」と出ること。これをなくすために、先に Supabase でトリガー用 SQL を実行しておく必要があります。
+
+---
+
 ## 1. Supabase プロジェクトを作る
 
 1. [supabase.com](https://supabase.com) にログイン（GitHub でサインアップ可）
@@ -30,6 +47,11 @@ Supabase ダッシュボードで **SQL Editor** を開き、次のファイル�
 または、Supabase の **Table Editor** は使わず、**SQL Editor** にこのマイグレーションの SQL を貼り付けて **Run** してください。  
 これで `app_users`（名簿）・`auth_profiles`（認証紐付け）・`day_settings`・`lessons`・`weekly_masters`・`accompanist_availabilities` が作成され、初期名簿も入ります。
 
+**続けて、もう1本の SQL を実行する**  
+同じ **SQL Editor** で、今度は次のファイルを開き、中身をすべてコピーして貼り付け、**Run** します。  
+- **ファイル**: `supabase/migrations/20250222200000_auth_profiles_rpc.sql`  
+これは「新規登録したときに auth_profiles に1行入れる」ための RPC です。**このファイルを実行しないと**、アカウント登録時に「new row violates row-level security policy」というエラーが出ます。
+
 ## 4. メール確認をオフにする（任意）
 
 Supabase は標準で「サインアップ時にメール確認」がオンです。  
@@ -53,6 +75,12 @@ Supabase は標準で「サインアップ時にメール確認」がオンで�
 2. 名前を選択して「登録する」でメール・パスワードを設定
 3. 別のブラウザやスマホで同じ URL を開き、同じメール・パスワードでログイン
 4. 同じ名簿・レッスン・スケジュールが見えれば OK
+
+## よくあるエラー
+
+**「new row violates row-level security policy for table "auth_profiles"」**  
+アカウント登録（名前を選んでメール・パスワードを入力して「登録する」）の直後に出る場合、**RPC 用の SQL がまだ実行されていません**。  
+Supabase の **SQL Editor** で、**New query** をクリックし、`supabase/migrations/20250222200000_auth_profiles_rpc.sql` の内容を**すべて**コピーして貼り付け、**Run** してください。成功したら、アプリで再度「登録する」を試します。
 
 ## 環境変数を設定していない場合
 

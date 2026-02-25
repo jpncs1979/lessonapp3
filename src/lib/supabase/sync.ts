@@ -155,26 +155,34 @@ export async function isAppUserRegistered(
   return !!data
 }
 
-/** サインアップ＋auth_profiles 登録 */
+/** サインアップ＋auth_profiles に RPC で1行挿入 */
 export async function registerWithSupabase(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   appUserId: string,
   email: string,
   password: string
 ): Promise<{ error: Error | null }> {
+  const emailTrim = email.trim()
   const { data: { user }, error: signUpError } = await supabase.auth.signUp({
-    email: email.trim(),
+    email: emailTrim,
     password,
-    options: { data: { app_user_id: appUserId } },
+    options: {
+      data: {
+        app_user_id: appUserId,
+        email: emailTrim,
+      },
+    },
   })
   if (signUpError) return { error: signUpError as unknown as Error }
   if (!user) return { error: new Error('サインアップに失敗しました') }
-  const { error: insertError } = await supabase.from('auth_profiles').insert({
-    auth_uid: user.id,
-    app_user_id: appUserId,
-    email: email.trim(),
+
+  // セッションが使えるまで少し待ってから RPC で auth_profiles に挿入
+  await new Promise((r) => setTimeout(r, 500))
+  const { error: rpcError } = await supabase.rpc('insert_my_auth_profile', {
+    p_app_user_id: appUserId,
+    p_email: emailTrim,
   })
-  if (insertError) return { error: insertError as unknown as Error }
+  if (rpcError) return { error: rpcError as unknown as Error }
   return { error: null }
 }
 
