@@ -142,17 +142,16 @@ export async function fetchFullState(
   }
 }
 
-/** 登録済みか（auth_profiles に app_user_id があるか） */
+/** 登録済みか（auth_profiles に app_user_id があるか）。未ログインでも RPC で判定可能 */
 export async function isAppUserRegistered(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   appUserId: string
 ): Promise<boolean> {
-  const { data } = await supabase
-    .from('auth_profiles')
-    .select('app_user_id')
-    .eq('app_user_id', appUserId)
-    .maybeSingle()
-  return !!data
+  const { data, error } = await supabase.rpc('check_app_user_registered', {
+    p_app_user_id: appUserId,
+  })
+  if (error) return false
+  return data === true
 }
 
 /** サインアップ＋auth_profiles に RPC で1行挿入 */
@@ -163,7 +162,7 @@ export async function registerWithSupabase(
   password: string
 ): Promise<{ error: Error | null }> {
   const emailTrim = email.trim()
-  const { data: { user }, error: signUpError } = await supabase.auth.signUp({
+  const { data: { user, session }, error: signUpError } = await supabase.auth.signUp({
     email: emailTrim,
     password,
     options: {
@@ -176,14 +175,24 @@ export async function registerWithSupabase(
   if (signUpError) return { error: signUpError as unknown as Error }
   if (!user) return { error: new Error('サインアップに失敗しました') }
 
-  // セッションが使えるまで少し待ってから RPC で auth_profiles に挿入
-  await new Promise((r) => setTimeout(r, 500))
-  const { error: rpcError } = await supabase.rpc('insert_my_auth_profile', {
-    p_app_user_id: appUserId,
-    p_email: emailTrim,
-  })
-  if (rpcError) return { error: rpcError as unknown as Error }
-  return { error: null }
+  // メール確認オフなら session が返る。確認オンだと null になり RPC で Not authenticated になる
+  if (!session) {
+    return { error: new Error('登録にはメール確認が必要です。Supabase の Authentication → Providers → Email で「Confirm email」をオフにすると、確認なしで入れます。') }
+  }
+
+  // セッション反映を待ってから RPC で auth_profiles に挿入（リトライあり）
+  let lastError: Error | null = null
+  for (let i = 0; i < 3; i++) {
+    await new Promise((r) => setTimeout(r, 400 * (i + 1)))
+    const { error: rpcError } = await supabase.rpc('insert_my_auth_profile', {
+      p_app_user_id: appUserId,
+      p_email: emailTrim,
+    })
+    if (!rpcError) return { error: null }
+    lastError = rpcError as unknown as Error
+    if (!String(rpcError.message || '').includes('Not authenticated')) return { error: lastError }
+  }
+  return { error: lastError }
 }
 
 /** サインイン（メール・パスワード） */

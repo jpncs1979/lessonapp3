@@ -47,10 +47,13 @@ Supabase ダッシュボードで **SQL Editor** を開き、次のファイル�
 または、Supabase の **Table Editor** は使わず、**SQL Editor** にこのマイグレーションの SQL を貼り付けて **Run** してください。  
 これで `app_users`（名簿）・`auth_profiles`（認証紐付け）・`day_settings`・`lessons`・`weekly_masters`・`accompanist_availabilities` が作成され、初期名簿も入ります。
 
-**続けて、もう1本の SQL を実行する**  
-同じ **SQL Editor** で、今度は次のファイルを開き、中身をすべてコピーして貼り付け、**Run** します。  
-- **ファイル**: `supabase/migrations/20250222200000_auth_profiles_rpc.sql`  
-これは「新規登録したときに auth_profiles に1行入れる」ための RPC です。**このファイルを実行しないと**、アカウント登録時に「new row violates row-level security policy」というエラーが出ます。
+**続けて、次の2本の SQL を実行する**  
+同じ **SQL Editor** で、**New query** を押してから、それぞれ次のファイルを開き、中身をすべてコピーして貼り付け、**Run** します。  
+
+1. **ファイル**: `supabase/migrations/20250222200000_auth_profiles_rpc.sql`  
+   → 新規登録したときに auth_profiles に1行入れるための RPC。実行しないと「new row violates row-level security policy」が出ます。  
+2. **ファイル**: `supabase/migrations/20250222300000_check_registered_rpc.sql`  
+   → ログアウト後も「この名前は登録済みか」を判定するための RPC。実行しないと、ログアウト後に名前を選んでも「登録」を求められ続けます。
 
 ## 4. メール確認をオフにする（任意）
 
@@ -77,6 +80,29 @@ Supabase は標準で「サインアップ時にメール確認」がオンで�
 4. 同じ名簿・レッスン・スケジュールが見えれば OK
 
 ## よくあるエラー
+
+**「Not authenticated」**  
+登録ボタンを押したあとに出る場合、**メール確認（Confirm email）がオンのまま**の可能性が高いです。確認がオンのときは、サインアップ直後は「未確認」扱いになり、RPC が動きません。  
+**Authentication** → **Providers** → **Email** を開き、**Confirm email** を**オフ**にしてください。オフにすると、登録後すぐにログインでき、「Not authenticated」も出なくなります。
+
+**「email rate limit exceeded」**  
+Supabase が「短い間にメールを送りすぎた」と判断してブロックしています。
+
+**対処**  
+1. **Confirm email をオフにする**（メールを送らないようにする）  
+   **Authentication** → **Providers** → **Email** を開き、**Confirm email** のスイッチを**オフ**にしてください。オフにすると、新規登録時に確認メールが送られなくなり、この制限にかかりにくくなります。  
+2. **しばらく待つ**  
+   制限は時間が経つと解除されます（目安：1時間ほど）。それまで新しい登録や「パスワードを忘れた」は試さず、時間をおいてから再度試してください。
+
+**「登録済みの名前を選んでも登録画面になる」「名前だけでログインできない」**  
+次の2つがそろっていないと、ログアウト後に「登録済み」と判定できません。
+
+1. **Supabase で RPC を実行しているか**  
+   **SQL Editor** で `supabase/migrations/20250222300000_check_registered_rpc.sql` の内容を貼り付けて **Run** しているか確認してください。まだなら実行します。
+2. **本番サイト（Vercel）が最新のコードか**  
+   この RPC を使うコードを **GitHub に push** し、Vercel の再デプロイが終わってから、本番の URL を **Ctrl+Shift+R** でスーパーリロードして試してください。
+
+両方済んでいれば、登録済みの名前を選ぶと「ログイン」ボタンが表示されます。
 
 **「new row violates row-level security policy for table "auth_profiles"」**  
 アカウント登録（名前を選んでメール・パスワードを入力して「登録する」）の直後に出る場合、**RPC 用の SQL がまだ実行されていません**。  
