@@ -6,8 +6,16 @@ import { AppProvider } from '@/lib/store'
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist' })
 
 export const metadata: Metadata = {
-  title: '大和田門下レッスン',
+  title: '大和田門下',
   description: '3者間レッスン調整システム',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: '大和田門下',
+  },
+  icons: {
+    apple: '/apple-touch-icon.png',
+  },
 }
 
 export const viewport: Viewport = {
