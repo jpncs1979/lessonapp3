@@ -1,11 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { generateTimeItems, getDaySummary, getDaysInMonth, today } from '@/lib/schedule'
 import { cn } from '@/lib/utils'
+
+const SWIPE_THRESHOLD = 50
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
 
@@ -16,6 +18,7 @@ export default function MonthCalendar() {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1)
+  const touchStartX = useRef<number | null>(null)
 
   const days = getDaysInMonth(year, month)
   const firstDay = new Date(year, month - 1, 1).getDay() // 0=日
@@ -31,6 +34,17 @@ export default function MonthCalendar() {
   const nextMonth = () => {
     if (month === 12) { setMonth(1); setYear(y => y + 1) }
     else setMonth(m => m + 1)
+  }
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX
+  }
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current == null) return
+    const dx = e.changedTouches[0].clientX - touchStartX.current
+    touchStartX.current = null
+    if (dx > SWIPE_THRESHOLD) prevMonth()
+    else if (dx < -SWIPE_THRESHOLD) nextMonth()
   }
 
   const getDayInfo = (dateStr: string) => {
@@ -78,7 +92,11 @@ export default function MonthCalendar() {
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+    <div
+      className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden touch-pan-y"
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
       {/* ヘッダー */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
         <button onClick={prevMonth} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">

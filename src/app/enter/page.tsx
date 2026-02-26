@@ -5,7 +5,6 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Music } from 'lucide-react'
 import { useApp } from '@/lib/store'
-import { getRoleLabel } from '@/lib/utils'
 import Button from '@/components/ui/Button'
 import { createSupabaseClient } from '@/lib/supabase/client'
 import { fetchAppUsers, fetchFullState } from '@/lib/supabase/sync'
@@ -112,7 +111,7 @@ export default function EnterPage() {
                     <option value="">選択してください</option>
                     {nameList.map((u) => (
                       <option key={u.id} value={u.id}>
-                        {u.name}（{getRoleLabel(u.role)}）
+                        {u.name}{u.role === 'accompanist' ? '（伴奏者）' : ''}
                       </option>
                     ))}
                   </select>

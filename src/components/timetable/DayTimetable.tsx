@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { Clock, User, Music, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useApp } from '@/lib/store'
@@ -8,6 +8,8 @@ import { generateTimeItems, formatDate, formatDateToYYYYMMDD } from '@/lib/sched
 import { TimeItem, LessonSlot } from '@/types'
 import { cn, getInitials, formatDeadline, calcProvisionalDeadline, generateId } from '@/lib/utils'
 import BookingModal from '@/components/booking/BookingModal'
+
+const SWIPE_THRESHOLD = 50
 
 interface DayTimetableProps {
   date: string
@@ -20,6 +22,7 @@ export default function DayTimetable({ date }: DayTimetableProps) {
   const [selectedSlot, setSelectedSlot] = useState<LessonSlot | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [studentSameDayError, setStudentSameDayError] = useState<string | null>(null)
+  const touchStartX = useRef<number | null>(null)
 
   const settings = getDaySettings(date)
   const lessonsForDate = getLessonsForDate(date)
@@ -138,8 +141,23 @@ export default function DayTimetable({ date }: DayTimetableProps) {
     })
   }
 
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX
+  }
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current == null) return
+    const dx = e.changedTouches[0].clientX - touchStartX.current
+    touchStartX.current = null
+    if (dx > SWIPE_THRESHOLD) prevDate()
+    else if (dx < -SWIPE_THRESHOLD) nextDate()
+  }
+
   return (
-    <div>
+    <div
+      className="touch-pan-y"
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
       {/* 日付ナビゲーション */}
       <div className="flex items-center justify-between mb-4">
         <button onClick={prevDate} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
