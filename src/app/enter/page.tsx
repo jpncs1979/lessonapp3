@@ -40,7 +40,13 @@ export default function EnterPage() {
     fetchAppUsers(supabase)
       .then((users) => {
         if (cancelled) return
-        setNameList(users.filter((u) => u.role === 'student' || u.role === 'accompanist'))
+        const list = users
+          .filter((u) => u.role === 'student' || u.role === 'accompanist')
+          .sort((a, b) => {
+            if (a.role !== b.role) return a.role === 'student' ? -1 : 1
+            return a.name.localeCompare(b.name, 'ja')
+          })
+        setNameList(list)
       })
       .catch(() => {
         if (!cancelled) {

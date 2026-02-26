@@ -367,6 +367,40 @@ export async function persistState(
   }
 }
 
+/** lessons だけを保存（名前のみの生徒・伴奏者の予約を anon で保存するため） */
+export async function persistLessonsOnly(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  lessons: LessonSlot[]
+): Promise<{ error: Error | null }> {
+  try {
+    const { data: existingLessons } = await supabase.from('lessons').select('id')
+    if (existingLessons?.length) {
+      const { error: delErr } = await supabase.from('lessons').delete().in('id', existingLessons.map((r: { id: string }) => r.id))
+      if (delErr) return { error: delErr as unknown as Error }
+    }
+    if (lessons.length > 0) {
+      const rows = lessons.map((l) => ({
+        id: l.id,
+        date: l.date,
+        start_time: l.startTime,
+        end_time: l.endTime,
+        room_name: l.roomName,
+        teacher_id: l.teacherId,
+        student_id: l.studentId ?? null,
+        accompanist_id: l.accompanistId ?? null,
+        status: l.status,
+        provisional_deadline: l.provisionalDeadline ?? null,
+        note: l.note ?? null,
+      }))
+      const { error } = await supabase.from('lessons').insert(rows)
+      if (error) return { error: error as unknown as Error }
+    }
+    return { error: null }
+  } catch (e) {
+    return { error: e instanceof Error ? e : new Error(String(e)) }
+  }
+}
+
 /** 伴奏者の「可能」枠だけを保存（anon 可。先生・生徒に反映するため） */
 export async function persistAccompanistAvailabilities(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,

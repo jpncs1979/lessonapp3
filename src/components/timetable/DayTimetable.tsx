@@ -322,7 +322,13 @@ function TimeSlotRow({
   const isAccompanistMarkedAvailable = isAccompanist && slot.status === 'available' && myAvailability
   const isAccompanistMyLesson = isAccompanist && (slot.status === 'confirmed' || slot.status === 'pending') && slot.accompanistId === currentUserId
 
+  const studentTapToCancel = isStudent && (slot.status === 'confirmed' || slot.status === 'pending') && isMyLesson
+
   const handleSlotAreaClick = () => {
+    if (studentTapToCancel) {
+      if (confirm('この予約をキャンセルしますか？')) onCancel(slot)
+      return
+    }
     if (studentTapForIndividual) {
       onBook(slot)
       return
@@ -345,7 +351,7 @@ function TimeSlotRow({
         onClick={handleSlotAreaClick}
         className={cn(
           'flex-1 min-w-0 rounded-xl border p-3 transition-colors',
-          (clickable || studentTapForIndividual) && 'cursor-pointer',
+          (clickable || studentTapForIndividual || studentTapToCancel) && 'cursor-pointer',
           slot.status === 'available' && !isAccompanistMarkedAvailable && 'bg-white border-gray-300 hover:bg-gray-50',
           isAccompanistMarkedAvailable && 'bg-white border-red-300 hover:bg-gray-50',
           (slot.status === 'confirmed' || slot.status === 'pending') && !(isStudent && isMyLesson) && !isAccompanistMyLesson && 'bg-blue-100 border-blue-300',
@@ -396,19 +402,6 @@ function TimeSlotRow({
         )}
         {slot.status === 'blocked' && (
           <p className="text-sm font-medium text-gray-500 mt-1">不可</p>
-        )}
-
-        {/* 生徒: 自分の予約は1タップでキャンセル */}
-        {isStudent && (slot.status === 'pending' || slot.status === 'confirmed') && isMyLesson && (
-          <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              onClick={() => onCancel(slot)}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-red-100 text-red-700 hover:bg-red-200"
-            >
-              キャンセル
-            </button>
-          </div>
         )}
 
         {/* 生徒：同じ日にすでに予約済みのときは追加予約不可 */}

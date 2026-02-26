@@ -14,6 +14,7 @@ import {
   fetchAppUsers,
   fetchFullState,
   persistState,
+  persistLessonsOnly,
   persistAccompanistAvailabilities,
   signOutSupabase,
 } from '@/lib/supabase/sync'
@@ -290,13 +291,36 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'MERGE_REMOTE_STATE': {
       const p = action.payload
+      let mergedLessons = p.lessons
+      const me = state.currentUser
+      if (p.lessons != null && me && (me.role === 'student' || me.role === 'accompanist')) {
+        const serverLessons = p.lessons
+        const myBookings = state.lessons.filter(
+          (l) => l.studentId === me.id || l.accompanistId === me.id
+        )
+        if (myBookings.length > 0) {
+          const serverIds = new Set(serverLessons.map((l) => l.id))
+          mergedLessons = [...serverLessons]
+          for (const local of myBookings) {
+            const idx = mergedLessons!.findIndex((m) => m.id === local.id)
+            if (idx < 0) {
+              mergedLessons!.push(local)
+            } else {
+              const onServer = mergedLessons![idx]
+              if (onServer.status === 'available' && (local.status === 'confirmed' || local.status === 'pending')) {
+                mergedLessons![idx] = local
+              }
+            }
+          }
+        }
+      }
       return {
         ...state,
         ...(p.users != null && { users: p.users }),
         ...(p.students != null && { students: p.students }),
         ...(p.accompanists != null && { accompanists: p.accompanists }),
         ...(p.daySettings != null && { daySettings: p.daySettings }),
-        ...(p.lessons != null && { lessons: p.lessons }),
+        ...(mergedLessons != null && { lessons: mergedLessons }),
         ...(p.weekly_masters != null && { weekly_masters: p.weekly_masters }),
         ...(p.accompanistAvailabilities != null && { accompanistAvailabilities: p.accompanistAvailabilities }),
       }
@@ -322,7 +346,12 @@ function reducer(state: AppState, action: Action): AppState {
     case 'DELETE_STUDENT': {
       const next = state.students.filter((s) => s.id !== action.payload)
       const users = state.users.filter((u) => u.id !== action.payload)
-      return { ...state, students: next, users }
+      const lessons = state.lessons.map((l) =>
+        l.studentId === action.payload
+          ? { ...l, status: 'available' as const, studentId: undefined, accompanistId: undefined, provisionalDeadline: undefined }
+          : l
+      )
+      return { ...state, students: next, users, lessons }
     }
     case 'ADD_ACCOMPANIST': {
       const next = [...state.accompanists, action.payload]
@@ -344,7 +373,15 @@ function reducer(state: AppState, action: Action): AppState {
     case 'DELETE_ACCOMPANIST': {
       const next = state.accompanists.filter((a) => a.id !== action.payload)
       const users = state.users.filter((u) => u.id !== action.payload)
-      return { ...state, accompanists: next, users }
+      const lessons = state.lessons.map((l) =>
+        l.accompanistId === action.payload
+          ? { ...l, status: 'available' as const, studentId: undefined, accompanistId: undefined, provisionalDeadline: undefined }
+          : l
+      )
+      const accompanist_availabilities = state.accompanist_availabilities.filter(
+        (a) => a.accompanistId !== action.payload
+      )
+      return { ...state, accompanists: next, users, lessons, accompanist_availabilities }
     }
     case 'UPSERT_WEEKLY_MASTER': {
       const rest = state.weekly_masters.filter(
@@ -579,12 +616,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return
     }
     if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current)
+    const isNameOnly = state.currentUser?.role === 'student' || state.currentUser?.role === 'accompanist'
+    const delayMs = isNameOnly ? 400 : 1500
     persistTimeoutRef.current = setTimeout(async () => {
       persistTimeoutRef.current = null
       const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return
-      await persistState(supabase, state)
-    }, 1500)
+      if (session) {
+        await persistState(supabase, state)
+      } else if (state.currentUser) {
+        await persistLessonsOnly(supabase, state.lessons)
+      }
+    }, delayMs)
     return () => {
       if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current)
     }
