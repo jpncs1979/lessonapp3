@@ -19,20 +19,45 @@ export default function EnterPage() {
 
   const [nameList, setNameList] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [selectedUserId, setSelectedUserId] = useState('')
 
   const selectedUser = nameList.find((u) => u.id === selectedUserId)
 
   // 名簿の生徒・伴奏者を表示（先生は含めない）
   useEffect(() => {
+    setLoadError(false)
     if (!supabase) {
       setLoading(false)
       return
     }
-    fetchAppUsers(supabase).then((users) => {
-      setNameList(users.filter((u) => u.role === 'student' || u.role === 'accompanist'))
+    let cancelled = false
+    const timeoutId = setTimeout(() => {
+      if (cancelled) return
+      setLoadError(true)
       setLoading(false)
-    })
+    }, 10000)
+    fetchAppUsers(supabase)
+      .then((users) => {
+        if (cancelled) return
+        setNameList(users.filter((u) => u.role === 'student' || u.role === 'accompanist'))
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNameList([])
+          setLoadError(true)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          clearTimeout(timeoutId)
+          setLoading(false)
+        }
+      })
+    return () => {
+      cancelled = true
+      clearTimeout(timeoutId)
+    }
   }, [supabase])
 
   // すでにログイン済みならカレンダーへ
@@ -87,7 +112,11 @@ export default function EnterPage() {
                     ))}
                   </select>
                   {nameList.length === 0 && (
-                    <p className="text-xs text-amber-600 mt-1">名簿に生徒・伴奏者がいません。先生が名簿に追加してください。</p>
+                    <p className="text-xs text-amber-600 mt-1">
+                      {loadError
+                        ? '名簿を取得できませんでした。通信を確認するか、しばらくして最初の画面からやり直してください。'
+                        : '名簿に生徒・伴奏者がいません。先生が名簿に追加してください。'}
+                    </p>
                   )}
                 </div>
 
