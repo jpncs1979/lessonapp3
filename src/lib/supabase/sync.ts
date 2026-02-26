@@ -251,13 +251,20 @@ export async function persistState(
   state: AppState
 ): Promise<{ error: Error | null }> {
   try {
-    // app_users: 名簿は id で upsert
+    // app_users: 名簿は state.users を正とする。upsert したあと、DB にだけある id は削除
+    const stateUserIds = new Set(state.users.map((u) => u.id))
     for (const u of state.users) {
       const { error } = await supabase.from('app_users').upsert(
         { id: u.id, name: u.name, role: u.role },
         { onConflict: 'id' }
       )
       if (error) return { error: error as unknown as Error }
+    }
+    const { data: existingAppUsers } = await supabase.from('app_users').select('id')
+    const toDelete = (existingAppUsers ?? []).filter((r) => !stateUserIds.has(r.id)).map((r) => r.id)
+    if (toDelete.length > 0) {
+      const { error: delErr } = await supabase.from('app_users').delete().in('id', toDelete)
+      if (delErr) return { error: delErr as unknown as Error }
     }
 
     // day_settings: date で upsert
