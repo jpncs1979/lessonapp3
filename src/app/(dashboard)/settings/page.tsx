@@ -53,8 +53,10 @@ export default function SettingsPage() {
         <button onClick={nextMonth} className="p-1.5 rounded-lg hover:bg-gray-100"><ChevronRight size={16} /></button>
       </div>
 
-      {/* 日付選択 */}
-      <div className="flex gap-1.5 overflow-x-auto pb-2 mb-5">
+      {/* 日付選択（PCでは横スクロールで月の全日を表示） */}
+      <p className="text-xs text-gray-400 mb-1.5">日付を選んでください（左右にスクロールで全日表示）</p>
+      <div className="w-full min-w-0 overflow-x-auto overflow-y-hidden pb-2 mb-5 scroll-smooth" style={{ WebkitOverflowScrolling: 'touch' }}>
+        <div className="flex gap-1.5 w-max min-w-full">
         {days.map((dateStr) => {
           const d = new Date(dateStr + 'T00:00:00')
           const dayNames = ['日', '月', '火', '水', '木', '金', '土']
@@ -82,6 +84,7 @@ export default function SettingsPage() {
             </button>
           )
         })}
+        </div>
       </div>
 
       {/* 設定パネル */}

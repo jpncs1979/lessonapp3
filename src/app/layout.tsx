@@ -6,7 +6,7 @@ import { AppProvider } from '@/lib/store'
 const geist = Geist({ subsets: ['latin'], variable: '--font-geist' })
 
 export const metadata: Metadata = {
-  title: 'レッスンスケジューラー',
+  title: '大和田門下レッスン',
   description: '3者間レッスン調整システム',
 }
 

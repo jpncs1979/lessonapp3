@@ -1,6 +1,6 @@
 'use client'
 
-import React, { createContext, useContext, useReducer, useEffect, ReactNode, useRef } from 'react'
+import React, { createContext, useContext, useReducer, useEffect, useCallback, ReactNode, useRef } from 'react'
 import {
   User, LessonSlot, DaySettings, AccompanistAvailability,
   LessonStatus, EndTimeMode, Student, Accompanist, WeeklyMaster
@@ -382,6 +382,8 @@ interface AppContextType {
   getLessonsForDate: (date: string) => LessonSlot[]
   getAvailabilitiesForSlot: (slotId: string) => AccompanistAvailability[]
   getAvailabilitiesForAccompanist: (accompanistId: string) => AccompanistAvailability[]
+  /** サーバーから最新の日設定・レッスン等を再取得（生徒・伴奏者向け） */
+  refreshFromServer: () => Promise<void>
 }
 
 const AppContext = createContext<AppContextType | null>(null)
@@ -598,6 +600,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const getUserById = (id?: string) => state.users.find((u) => u.id === id)
 
+  const refreshFromServer = useCallback(async () => {
+    const supabase = supabaseRef.current
+    if (!supabase) return
+    const full = await fetchFullState(supabase)
+    if (full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+  }, [])
+
+  // 生徒・伴奏者は定期的にサーバーから再取得（先生の設定・レッスン反映のため）
+  useEffect(() => {
+    const isNameOnly = state.currentUser && (state.currentUser.role === 'student' || state.currentUser.role === 'accompanist')
+    if (!isNameOnly) return
+    const intervalMs = 2 * 60 * 1000
+    const id = setInterval(refreshFromServer, intervalMs)
+    return () => clearInterval(id)
+  }, [state.currentUser?.id, state.currentUser?.role, refreshFromServer])
+
   const getDaySettings = (date: string): DaySettings => {
     return (
       state.daySettings.find((s) => s.date === date) ||
@@ -624,6 +642,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         getLessonsForDate,
         getAvailabilitiesForSlot,
         getAvailabilitiesForAccompanist,
+        refreshFromServer,
       }}
     >
       {children}

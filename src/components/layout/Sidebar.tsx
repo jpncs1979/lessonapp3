@@ -2,14 +2,15 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Calendar, Settings, LogOut, Music, BarChart3 } from 'lucide-react'
+import { Calendar, Settings, LogOut, Music, BarChart3, RefreshCw } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { cn, getRoleLabel, getRoleColor, getInitials } from '@/lib/utils'
 
 export default function Sidebar() {
   const pathname = usePathname()
-  const { state, dispatch } = useApp()
+  const { state, dispatch, refreshFromServer } = useApp()
   const { currentUser } = state
+  const isStudentOrAccompanist = currentUser?.role === 'student' || currentUser?.role === 'accompanist'
 
   if (!currentUser) return null
 
@@ -31,7 +32,7 @@ export default function Sidebar() {
             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
               <Music size={16} className="text-white" />
             </div>
-            <span className="font-bold text-gray-900 text-sm leading-tight">レッスン<br />スケジューラー</span>
+            <span className="font-bold text-gray-900 text-sm leading-tight">大和田門下レッスン</span>
           </div>
         </div>
 
@@ -70,6 +71,16 @@ export default function Sidebar() {
               </span>
             </div>
           </div>
+          {isStudentOrAccompanist && (
+            <button
+              type="button"
+              onClick={() => refreshFromServer()}
+              className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+            >
+              <RefreshCw size={14} />
+              最新に更新
+            </button>
+          )}
           <button
             onClick={async () => {
               const supabase = (await import('@/lib/supabase/client')).createSupabaseClient()

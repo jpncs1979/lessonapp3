@@ -61,6 +61,8 @@ export default function MonthCalendar() {
 
     if (currentUser.role === 'teacher') {
       if (!isLessonDay) return { text: '不可', className: 'text-gray-300' }
+      const available = dayInfo!.available ?? 0
+      if (available === 0) return { text: '空き無し', className: 'text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full font-medium' }
       const confirmedOrPending = lessons.filter((l) => l.status === 'confirmed' || l.status === 'pending')
       const n = confirmedOrPending.length
       if (n > 0) return { text: `レッスンあり ${n}`, className: 'text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium' }
@@ -185,13 +187,18 @@ export default function MonthCalendar() {
       </div>
 
       {/* 凡例（役割により表示が異なるため簡易表示） */}
-      <div className="flex items-center gap-4 px-5 py-3 bg-gray-50 text-xs text-gray-500">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 bg-gray-50 text-xs text-gray-500">
         <span className="flex items-center gap-1">
           <span className="w-2 h-2 rounded-full bg-emerald-400" />空き・空きあり
         </span>
         <span className="flex items-center gap-1">
           <span className="w-2 h-2 rounded-full bg-indigo-400" />レッスンあり
         </span>
+        {currentUser?.role === 'teacher' && (
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-gray-400" />空き無し
+          </span>
+        )}
         <span className="flex items-center gap-1">
           <span className="w-2 h-2 rounded-full bg-gray-300" />不可・なし
         </span>

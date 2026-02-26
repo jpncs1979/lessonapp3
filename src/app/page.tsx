@@ -39,7 +39,7 @@ export default function Home() {
         <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl shadow-lg mb-4">
           <Music size={32} className="text-white" />
         </div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">レッスンスケジューラー</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">大和田門下レッスン</h1>
         <p className="text-sm text-gray-500 mb-8">生徒・伴奏者は名前を選択。先生はログイン。</p>
 
         <div className="space-y-3">
