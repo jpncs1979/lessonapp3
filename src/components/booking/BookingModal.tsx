@@ -330,9 +330,6 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
               >
                 この枠に指定する
               </Button>
-              <Button variant="secondary" className="w-full" onClick={handleCancel}>
-                枠をブロック
-              </Button>
             </>
           )}
         </div>

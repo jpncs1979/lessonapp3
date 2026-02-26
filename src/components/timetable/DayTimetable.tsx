@@ -19,6 +19,7 @@ export default function DayTimetable({ date }: DayTimetableProps) {
   const { currentUser, lessons } = state
   const [selectedSlot, setSelectedSlot] = useState<LessonSlot | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  const [studentSameDayError, setStudentSameDayError] = useState<string | null>(null)
 
   const settings = getDaySettings(date)
   const lessonsForDate = getLessonsForDate(date)
@@ -42,7 +43,7 @@ export default function DayTimetable({ date }: DayTimetableProps) {
 
   const handleSlotClick = (slot: LessonSlot) => {
     if (slot.status === 'break' || slot.status === 'lunch') return
-    // 先生: 不可枠は1タップでレッスン可に。空き枠・確定枠はモーダルで生徒・伴奏者を指定／変更
+    // 先生: 不可枠は1タップでレッスン可に。空き枠も1タップで不可に。生徒指定は枠内の「生徒を指定」から
     if (isTeacher) {
       if (slot.status === 'blocked') {
         const inState = lessons.some((l) => l.id === slot.id)
@@ -53,7 +54,16 @@ export default function DayTimetable({ date }: DayTimetableProps) {
         }
         return
       }
-      // available / confirmed のときはモーダルを開いて生徒・伴奏者を指定または変更
+      if (slot.status === 'available') {
+        const inState = lessons.some((l) => l.id === slot.id)
+        if (inState) {
+          dispatch({ type: 'UPDATE_LESSON', payload: { id: slot.id, status: 'blocked' } })
+        } else {
+          dispatch({ type: 'ADD_LESSON', payload: { ...slot, status: 'blocked' } })
+        }
+        return
+      }
+      // confirmed / pending のときはモーダルで生徒・伴奏者を変更
       setSelectedSlot(slot)
       setModalOpen(true)
       return
@@ -91,6 +101,15 @@ export default function DayTimetable({ date }: DayTimetableProps) {
 
   const handleBookForStudent = (slot: LessonSlot, accompanistId?: string) => {
     if (!currentUser || currentUser.role !== 'student') return
+    const alreadyHasLesson = lessonsForDate.some(
+      (l) => l.id !== slot.id && (l.status === 'confirmed' || l.status === 'pending') && l.studentId === currentUser.id
+    )
+    if (alreadyHasLesson) {
+      setStudentSameDayError('同じ日にはレッスンは1回までです。')
+      setTimeout(() => setStudentSameDayError(null), 4000)
+      return
+    }
+    setStudentSameDayError(null)
     dispatch({
       type: 'UPDATE_LESSON',
       payload: {
@@ -173,6 +192,13 @@ export default function DayTimetable({ date }: DayTimetableProps) {
         </div>
       )}
 
+      {/* 生徒：同日にすでにレッスンがあるときのメッセージ */}
+      {studentSameDayError && currentUser?.role === 'student' && (
+        <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
+          {studentSameDayError}
+        </div>
+      )}
+
       {/* タイムライン */}
       {!settings.isLessonDay ? (
         <div className="text-center py-12 text-gray-400">
@@ -191,7 +217,20 @@ export default function DayTimetable({ date }: DayTimetableProps) {
               isTeacher={isTeacher}
               isAccompanist={isAccompanist}
               isStudent={currentUser?.role === 'student'}
+              studentAlreadyHasLessonOnThisDay={
+                currentUser?.role === 'student' &&
+                lessonsForDate.some(
+                  (l) => (l.status === 'confirmed' || l.status === 'pending') && l.studentId === currentUser.id
+                )
+              }
               onSlotClick={handleSlotClick}
+              onTeacherOpenAssignModal={() => {
+                const slot = item.type === 'slot' && item.slot ? item.slot : null
+                if (slot) {
+                  setSelectedSlot(slot)
+                  setModalOpen(true)
+                }
+              }}
               onBook={handleBookForStudent}
               onCancel={handleCancelForStudent}
               getUserById={getUserById}
@@ -220,7 +259,11 @@ interface TimeSlotRowProps {
   isTeacher: boolean
   isAccompanist: boolean
   isStudent: boolean
+  /** 生徒がこの日すでにレッスン予約済み（同じ日は1回まで） */
+  studentAlreadyHasLessonOnThisDay?: boolean
   onSlotClick: (slot: LessonSlot) => void
+  /** 先生が空き枠で「生徒を指定」を押したときにモーダルを開く */
+  onTeacherOpenAssignModal?: () => void
   onBook: (slot: LessonSlot, accompanistId?: string) => void
   onCancel: (slot: LessonSlot) => void
   getUserById: (id?: string) => import('@/types').User | undefined
@@ -241,7 +284,7 @@ function getAdjacentConfirmedAccompanistIds(items: TimeItem[], index: number): s
 }
 
 function TimeSlotRow({
-  item, items, itemIndex, currentUserId, isTeacher, isAccompanist, isStudent, onSlotClick, onBook, onCancel, getUserById, getAvailabilitiesForSlot
+  item, items, itemIndex, currentUserId, isTeacher, isAccompanist, isStudent, studentAlreadyHasLessonOnThisDay, onSlotClick, onTeacherOpenAssignModal, onBook, onCancel, getUserById, getAvailabilitiesForSlot
 }: TimeSlotRowProps) {
   if (item.type === 'break') {
     return (
@@ -284,7 +327,7 @@ function TimeSlotRow({
     : []
 
   const clickable = !['break', 'lunch'].includes(slot.status) && (isTeacher || isAccompanist)
-  const studentTapForIndividual = isStudent && slot.status === 'available'
+  const studentTapForIndividual = isStudent && slot.status === 'available' && !studentAlreadyHasLessonOnThisDay
   const hasAccompanistAvailable = slot.status === 'available' && availabilities.length > 0
   const isConfirmedIndividual = slot.status === 'confirmed' && !accompanist
   const isConfirmedAccompanied = slot.status === 'confirmed' && accompanist
@@ -298,6 +341,11 @@ function TimeSlotRow({
       return
     }
     if (clickable) onSlotClick(slot)
+  }
+
+  const handleTeacherAssignClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onTeacherOpenAssignModal?.()
   }
 
   return (
@@ -363,23 +411,34 @@ function TimeSlotRow({
           </div>
         )}
 
+        {/* 生徒：同じ日にすでに予約済みのときは追加予約不可 */}
+        {isStudent && slot.status === 'available' && studentAlreadyHasLessonOnThisDay && (
+          <p className="text-xs text-gray-500 font-medium mt-1">この日は予約済み</p>
+        )}
         {/* 空き枠: 伴奏者・先生用の表示 */}
         {!isStudent && slot.status === 'available' && (
           <div className="mt-2 space-y-1">
+            {isTeacher && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-gray-400">タップで不可に</span>
+                <button
+                  type="button"
+                  onClick={handleTeacherAssignClick}
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700 underline"
+                >
+                  生徒を指定
+                </button>
+              </div>
+            )}
             {hasAccompanistAvailable ? (
-              <>
-                {isAccompanist && (
-                  <>
-                    <p className="text-xs text-teal-700">{availabilities.map((a) => getUserById(a.accompanistId)?.name).filter(Boolean).join('、')}</p>
-                    <p className="text-xs text-teal-600">{myAvailability ? 'タップで解除' : 'タップで追加'}</p>
-                  </>
-                )}
-              </>
+              isAccompanist && (
+                <>
+                  <p className="text-xs text-teal-700">{availabilities.map((a) => getUserById(a.accompanistId)?.name).filter(Boolean).join('、')}</p>
+                  <p className="text-xs text-teal-600">{myAvailability ? 'タップで解除' : 'タップで追加'}</p>
+                </>
+              )
             ) : (
-              <>
-                {isTeacher && <p className="text-xs text-gray-400 mt-1">レッスン可</p>}
-                {isAccompanist && <p className="text-xs text-teal-600 mt-1">タップで伴奏付きレッスン可に</p>}
-              </>
+              isAccompanist && <p className="text-xs text-teal-600 mt-1">タップで伴奏付きレッスン可に</p>
             )}
           </div>
         )}
@@ -400,8 +459,8 @@ function TimeSlotRow({
         )}
       </div>
 
-      {/* 枠外に伴奏者スタンプ（生徒はタップで伴奏付き予約、先生は表示のみ） */}
-      {(isStudent || isTeacher) && slot.status === 'available' && availabilities.length > 0 && (
+      {/* 枠外に伴奏者スタンプ（生徒はタップで伴奏付き予約、先生は表示のみ。生徒は同日に1回までなので予約済みなら出さない） */}
+      {((isStudent && !studentAlreadyHasLessonOnThisDay) || isTeacher) && slot.status === 'available' && availabilities.length > 0 && (
         <div className="flex flex-col gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
           {availabilities.map((a) => {
             const acc = getUserById(a.accompanistId)

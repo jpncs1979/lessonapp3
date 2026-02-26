@@ -185,24 +185,6 @@ export default function MonthCalendar() {
           )
         })}
       </div>
-
-      {/* 凡例（役割により表示が異なるため簡易表示） */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3 bg-gray-50 text-xs text-gray-500">
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-emerald-400" />空き・空きあり
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-indigo-400" />レッスンあり
-        </span>
-        {currentUser?.role === 'teacher' && (
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-gray-400" />空き無し
-          </span>
-        )}
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-gray-300" />不可・なし
-        </span>
-      </div>
     </div>
   )
 }
