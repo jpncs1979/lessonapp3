@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Clock, User, Music, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useApp } from '@/lib/store'
@@ -23,6 +23,8 @@ export default function DayTimetable({ date }: DayTimetableProps) {
   const [modalOpen, setModalOpen] = useState(false)
   const [studentSameDayError, setStudentSameDayError] = useState<string | null>(null)
   const touchStartX = useRef<number | null>(null)
+  const touchStartY = useRef<number | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   const settings = getDaySettings(date)
   const lessonsForDate = getLessonsForDate(date)
@@ -143,20 +145,37 @@ export default function DayTimetable({ date }: DayTimetableProps) {
 
   const onTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX
+    touchStartY.current = e.touches[0].clientY
   }
   const onTouchEnd = (e: React.TouchEvent) => {
     if (touchStartX.current == null) return
     const dx = e.changedTouches[0].clientX - touchStartX.current
     touchStartX.current = null
+    touchStartY.current = null
     if (dx > SWIPE_THRESHOLD) prevDate()
     else if (dx < -SWIPE_THRESHOLD) nextDate()
   }
 
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const onMove = (e: TouchEvent) => {
+      if (touchStartX.current == null || touchStartY.current == null) return
+      const dx = e.touches[0].clientX - touchStartX.current
+      const dy = e.touches[0].clientY - touchStartY.current
+      if (Math.abs(dx) > 15 && Math.abs(dx) > Math.abs(dy)) e.preventDefault()
+    }
+    el.addEventListener('touchmove', onMove, { passive: false })
+    return () => el.removeEventListener('touchmove', onMove)
+  }, [])
+
   return (
     <div
+      ref={containerRef}
       className="touch-pan-y"
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
+      style={{ touchAction: 'pan-y' }}
     >
       {/* 日付ナビゲーション */}
       <div className="flex items-center justify-between mb-4">
