@@ -386,6 +386,8 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | null>(null)
 
 const STORAGE_KEY = 'lessonapp_state'
+/** 生徒・伴奏者が「名前だけで入った」ときの永続化キー（先生は使わない） */
+export const NAME_ONLY_USER_KEY = 'lessonapp_name_only_user'
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const todayStr = today()
@@ -465,12 +467,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (session?.user) {
         const appUser = await getAppUserFromSession(supabase)
         if (appUser && mounted) {
+          try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
           dispatch({ type: 'LOGIN', payload: appUser })
           skipPersistRef.current = true
           const full = await fetchFullState(supabase)
           if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
         }
       } else {
+        try {
+          const raw = localStorage.getItem(NAME_ONLY_USER_KEY)
+          if (raw && mounted) {
+            const parsed = JSON.parse(raw) as { id: string; name: string; role: string }
+            if (parsed?.id && parsed?.name && (parsed.role === 'student' || parsed.role === 'accompanist')) {
+              const nameOnlyUser: User = { id: parsed.id, name: parsed.name, email: '', role: parsed.role as User['role'] }
+              dispatch({ type: 'LOGIN', payload: nameOnlyUser })
+              skipPersistRef.current = true
+              const full = await fetchFullState(supabase)
+              if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+              hasRestoredRef.current = true
+              dispatch({ type: 'SESSION_RESTORE_DONE' })
+              return
+            }
+          }
+        } catch { /* ignore */ }
         const users = await fetchAppUsers(supabase)
         if (mounted && users.length) {
           const students = users.filter((u) => u.role === 'student').map((u) => ({ id: u.id, name: u.name }))
@@ -484,6 +503,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted || !supabase) return
       if (event === 'SIGNED_OUT') {
+        try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
         dispatch({ type: 'LOGOUT' })
         return
       }
@@ -525,7 +545,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch { /* ignore */ }
   }, [state])
 
-  // Supabase 利用時: 状態変更をデバウンスして保存
+  // ログアウト時に名前のみユーザーを localStorage から削除
+  useEffect(() => {
+    if (state.currentUser === null) {
+      try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
+    }
+  }, [state.currentUser])
+
+  // Supabase 利用時: 状態変更をデバウンスして保存（先生のみ・セッションがあるときだけ）
   useEffect(() => {
     const supabase = supabaseRef.current
     if (!supabase || !state.currentUser || !hasRestoredRef.current) return
@@ -536,6 +563,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current)
     persistTimeoutRef.current = setTimeout(async () => {
       persistTimeoutRef.current = null
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
       await persistState(supabase, state)
     }, 1500)
     return () => {

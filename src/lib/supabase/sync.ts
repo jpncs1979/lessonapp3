@@ -142,6 +142,34 @@ export async function fetchFullState(
   }
 }
 
+/** 「名前を選択して入る」用：登録済みの生徒・伴奏者だけ（先生は含まない） */
+export async function fetchRegisteredUsersForEnter(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
+): Promise<AppState['users']> {
+  const { data: rows, error } = await supabase.rpc('get_registered_users_for_enter')
+  if (error || !rows?.length) return []
+  return (rows as { id: string; name: string; role: string }[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    email: '',
+    role: r.role as User['role'],
+  }))
+}
+
+/** 「新規登録」用：名簿にいるがまだ登録（auth_profiles）していない人だけ */
+export async function fetchUnregisteredUsers(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
+): Promise<AppState['users']> {
+  const { data: rows, error } = await supabase.rpc('get_unregistered_users')
+  if (error || !rows?.length) return []
+  return (rows as { id: string; name: string; role: string }[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    email: '',
+    role: r.role as User['role'],
+  }))
+}
+
 /** 登録済みか（auth_profiles に app_user_id があるか）。未ログインでも RPC で判定可能 */
 export async function isAppUserRegistered(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,

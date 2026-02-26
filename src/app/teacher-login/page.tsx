@@ -9,7 +9,7 @@ import Button from '@/components/ui/Button'
 import { createSupabaseClient } from '@/lib/supabase/client'
 import { getAppUserFromSession, signInWithSupabase } from '@/lib/supabase/sync'
 
-export default function LoginPage() {
+export default function TeacherLoginPage() {
   const router = useRouter()
   const { state, dispatch } = useApp()
   const supabase = createSupabaseClient()
@@ -18,19 +18,19 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // すでにログイン済み（セッションあり）ならメール・パスワードを聞かずカレンダーへ
   useEffect(() => {
     if (state.currentUser) {
-      router.push('/calendar')
-      return
-    }
-    if (!supabase) return
-    getAppUserFromSession(supabase).then((user) => {
-      if (user) {
-        dispatch({ type: 'LOGIN', payload: user })
+      if (state.currentUser.role === 'teacher') {
         router.push('/calendar')
       }
-    })
+    } else if (supabase) {
+      getAppUserFromSession(supabase).then((user) => {
+        if (user?.role === 'teacher') {
+          dispatch({ type: 'LOGIN', payload: user })
+          router.push('/calendar')
+        }
+      })
+    }
   }, [state.currentUser, supabase, dispatch, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -41,12 +41,10 @@ export default function LoginPage() {
       setError('メールアドレスとパスワードを入力してください')
       return
     }
-
     if (!supabase) {
       setError('ログイン機能は利用できません。')
       return
     }
-
     setLoading(true)
     try {
       const { user: appUser, error: signInError } = await signInWithSupabase(supabase, emailTrim, password)
@@ -55,8 +53,15 @@ export default function LoginPage() {
         setLoading(false)
         return
       }
-      if (appUser) dispatch({ type: 'LOGIN', payload: appUser })
-      router.push('/calendar')
+      if (appUser) {
+        if (appUser.role !== 'teacher') {
+          setError('先生用のログインです。生徒・伴奏者は「名前を選択して入る」から入ってください。')
+          setLoading(false)
+          return
+        }
+        dispatch({ type: 'LOGIN', payload: appUser })
+        router.push('/calendar')
+      }
     } catch {
       setError('ログインに失敗しました。')
       setLoading(false)
@@ -70,8 +75,8 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl shadow-lg mb-4">
             <Music size={32} className="text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">ログイン</h1>
-          <p className="text-sm text-gray-500 mt-1">登録したメールとパスワードを入力してください（別の端末から入るときなど）</p>
+          <h1 className="text-2xl font-bold text-gray-900">先生ログイン</h1>
+          <p className="text-sm text-gray-500 mt-1">メールアドレスとパスワードを入力してください</p>
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
@@ -110,9 +115,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center mt-4">
-          <Link href="/enter" className="text-sm text-gray-500 hover:underline">名前を選択して入る</Link>
-          <span className="mx-2">|</span>
-          <Link href="/register" className="text-sm text-indigo-600 hover:underline">新規登録</Link>
+          <Link href="/" className="text-sm text-gray-500 hover:underline">最初の画面に戻る</Link>
         </p>
       </div>
     </div>

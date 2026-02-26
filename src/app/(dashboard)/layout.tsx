@@ -10,12 +10,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { state } = useApp()
 
   useEffect(() => {
-    if (!state.currentUser) {
-      router.push('/')
-    }
-  }, [state.currentUser, router])
+    if (!state.sessionRestoreDone) return
+    if (!state.currentUser) router.push('/')
+  }, [state.sessionRestoreDone, state.currentUser, router])
 
-  if (!state.currentUser) {
+  if (!state.sessionRestoreDone || !state.currentUser) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full" />
