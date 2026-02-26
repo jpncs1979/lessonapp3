@@ -378,10 +378,10 @@ function reducer(state: AppState, action: Action): AppState {
           ? { ...l, status: 'available' as const, studentId: undefined, accompanistId: undefined, provisionalDeadline: undefined }
           : l
       )
-      const accompanist_availabilities = state.accompanist_availabilities.filter(
+      const accompanistAvailabilities = state.accompanistAvailabilities.filter(
         (a) => a.accompanistId !== action.payload
       )
-      return { ...state, accompanists: next, users, lessons, accompanist_availabilities }
+      return { ...state, accompanists: next, users, lessons, accompanistAvailabilities }
     }
     case 'UPSERT_WEEKLY_MASTER': {
       const rest = state.weekly_masters.filter(
