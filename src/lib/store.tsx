@@ -14,6 +14,7 @@ import {
   fetchAppUsers,
   fetchFullState,
   persistState,
+  persistAccompanistAvailabilities,
   signOutSupabase,
 } from '@/lib/supabase/sync'
 
@@ -588,6 +589,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current)
     }
   }, [state])
+
+  // 伴奏者が「可能」枠を変更したときに DB に保存（先生・生徒に反映するため）
+  const accompanistAvailTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const supabase = supabaseRef.current
+    if (!supabase || state.currentUser?.role !== 'accompanist' || !hasRestoredRef.current) return
+    const accompanistId = state.currentUser.id
+    if (accompanistAvailTimeoutRef.current) clearTimeout(accompanistAvailTimeoutRef.current)
+    accompanistAvailTimeoutRef.current = setTimeout(async () => {
+      accompanistAvailTimeoutRef.current = null
+      const slotIds = state.accompanistAvailabilities
+        .filter((a) => a.accompanistId === accompanistId)
+        .map((a) => a.slotId)
+      await persistAccompanistAvailabilities(supabase, accompanistId, slotIds)
+    }, 1500)
+    return () => {
+      if (accompanistAvailTimeoutRef.current) clearTimeout(accompanistAvailTimeoutRef.current)
+    }
+  }, [state.currentUser?.id, state.accompanistAvailabilities])
 
   // 定期的に期限切れをチェック（1分ごと）
   useEffect(() => {

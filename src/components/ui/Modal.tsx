@@ -32,16 +32,17 @@ export default function Modal({ open, onClose, title, children, size = 'md' }: M
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
       onClick={(e) => { if (e.target === overlayRef.current) onClose() }}
     >
       {/* backdrop */}
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
 
-      {/* panel */}
+      {/* panel: モバイルで画面内に収め、スクロール可能に */}
       <div
         className={cn(
-          'relative bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-h-[90vh] overflow-y-auto',
+          'relative bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-w-[100vw] max-h-[90dvh] sm:max-h-[90vh] overflow-y-auto overflow-x-hidden',
+          'min-h-0 pb-[env(safe-area-inset-bottom)]',
           {
             'sm:max-w-sm': size === 'sm',
             'sm:max-w-lg': size === 'md',
@@ -50,14 +51,14 @@ export default function Modal({ open, onClose, title, children, size = 'md' }: M
         )}
       >
         {title && (
-          <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100">
-            <h2 className="text-base font-semibold text-gray-900">{title}</h2>
-            <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors">
+          <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 flex-shrink-0">
+            <h2 className="text-base font-semibold text-gray-900 truncate pr-8">{title}</h2>
+            <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors flex-shrink-0 absolute top-4 right-4">
               <X size={18} />
             </button>
           </div>
         )}
-        <div className="p-5">{children}</div>
+        <div className="p-5 min-w-0">{children}</div>
       </div>
     </div>
   )

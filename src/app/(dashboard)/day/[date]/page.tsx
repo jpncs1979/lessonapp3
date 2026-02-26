@@ -57,8 +57,8 @@ export default function DayPage({ params }: { params: Promise<{ date: string }> 
   }
 
   return (
-    <div>
-      <h1 className="text-xl font-bold text-gray-900 mb-1">{scheduleTitle}</h1>
+    <div className="w-full min-w-0 max-w-full overflow-x-hidden">
+      <h1 className="text-xl font-bold text-gray-900 mb-1 truncate">{scheduleTitle}</h1>
 
       {/* 先生用: この日がレッスン日でないとき「枠を生成」 */}
       {isTeacher && !settings.isLessonDay && (
@@ -94,7 +94,9 @@ export default function DayPage({ params }: { params: Promise<{ date: string }> 
         </div>
       )}
 
-      <DayTimetable date={date} />
+      <div className="min-w-0 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+        <DayTimetable date={date} />
+      </div>
     </div>
   )
 }

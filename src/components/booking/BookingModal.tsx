@@ -7,7 +7,7 @@ import Button from '@/components/ui/Button'
 import { useApp } from '@/lib/store'
 import { generateTimeItems } from '@/lib/schedule'
 import { LessonSlot, AccompanistAvailability, TimeItem } from '@/types'
-import { cn, getInitials, formatDeadline, isExpired, calcProvisionalDeadline, generateId } from '@/lib/utils'
+import { cn, getInitials, generateId } from '@/lib/utils'
 
 interface BookingModalProps {
   open: boolean
@@ -61,9 +61,6 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
 
   const student = getUserById(slot.studentId)
   const accompanist = getUserById(slot.accompanistId)
-  const settings = state.daySettings.find((s) => s.date === slot.date)
-  const provisionalHours = settings?.provisionalHours || 24
-
   const handleBook = () => {
     if (!isStudent || !currentUser) return
     const otherOnSameDay = lessonsForDate.some(
@@ -81,8 +78,8 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
         id: slot.id,
         studentId: currentUser.id,
         accompanistId: acc || undefined,
-        status: 'pending',
-        provisionalDeadline: calcProvisionalDeadline(provisionalHours),
+        status: 'confirmed',
+        provisionalDeadline: undefined,
       },
     })
 
@@ -91,11 +88,6 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
     }
 
     setSubmitted(true)
-  }
-
-  const handleApprove = () => {
-    dispatch({ type: 'APPROVE_LESSON', payload: slot.id })
-    onClose()
   }
 
   const handleCancel = () => {
@@ -155,20 +147,15 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
   }
 
   const myAvailability = availabilities.find((a) => a.accompanistId === currentUser.id)
-  const expired = isExpired(slot.provisionalDeadline)
 
   if (submitted) {
     return (
-      <Modal open={open} onClose={() => { onClose(); setSubmitted(false) }} title="予約申請完了">
+      <Modal open={open} onClose={() => { onClose(); setSubmitted(false) }} title="予約完了">
         <div className="text-center py-4">
           <div className="w-14 h-14 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-3">
             <Check size={28} className="text-emerald-600" />
           </div>
-          <p className="font-semibold text-gray-900 mb-1">予約申請が完了しました</p>
-          <p className="text-sm text-gray-500 mb-4">先生の承認をお待ちください</p>
-          <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
-            仮押さえ期限：{formatDeadline(calcProvisionalDeadline(provisionalHours))}
-          </p>
+          <p className="font-semibold text-gray-900 mb-1">予約が確定しました</p>
           <Button className="mt-5 w-full" onClick={() => { onClose(); setSubmitted(false) }}>
             閉じる
           </Button>
@@ -214,23 +201,14 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
             </div>
           )}
           {accompanist && (
-            <div className="flex items-center gap-2 p-2.5 bg-teal-50 rounded-lg">
-              <div className="w-7 h-7 bg-teal-200 rounded-full flex items-center justify-center text-teal-800 text-xs font-semibold">
+            <div className="flex items-center gap-2 p-2.5 bg-gray-50 rounded-lg">
+              <div className="w-7 h-7 bg-gray-200 rounded-full flex items-center justify-center text-gray-700 text-xs font-semibold">
                 {getInitials(accompanist.name)}
               </div>
               <div>
-                <p className="text-xs text-teal-500">伴奏者</p>
+                <p className="text-xs text-gray-500">伴奏者</p>
                 <p className="text-sm font-medium text-gray-900">{accompanist.name}</p>
               </div>
-            </div>
-          )}
-          {slot.status === 'pending' && slot.provisionalDeadline && (
-            <div className={cn(
-              'flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg',
-              expired ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'
-            )}>
-              <AlertCircle size={13} />
-              {expired ? '期限切れ（自動解放されます）' : `仮押さえ期限：${formatDeadline(slot.provisionalDeadline)}`}
             </div>
           )}
         </div>
@@ -239,20 +217,10 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
       {/* ── 先生のアクション ── */}
       {isTeacher && (
         <div className="space-y-2">
-          {slot.status === 'pending' && (
+          {(slot.status === 'pending' || slot.status === 'confirmed') && (
             <>
-              <Button variant="success" className="w-full" onClick={handleApprove}>
-                <Check size={16} className="mr-1.5" /> 承認する
-              </Button>
-              <Button variant="danger" className="w-full" onClick={handleCancel}>
-                キャンセル・枠を解放
-              </Button>
-            </>
-          )}
-          {slot.status === 'confirmed' && (
-            <>
-              <div className="mb-4 p-3 bg-indigo-50 rounded-xl">
-                <p className="text-xs font-medium text-indigo-600 mb-2">生徒・伴奏者を変更</p>
+              <div className="mb-4 p-3 bg-blue-50 rounded-xl">
+                <p className="text-xs font-medium text-blue-600 mb-2">生徒・伴奏者を変更</p>
                 <div className="space-y-2">
                   <div>
                     <p className="text-xs text-gray-600 mb-1">生徒</p>
@@ -363,7 +331,7 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
                     onClick={() => setWithAccompanist(false)}
                     className={cn(
                       'px-3 py-2.5 rounded-xl text-sm font-medium border-2 transition-colors',
-                      !withAccompanist ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                      !withAccompanist ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                     )}
                   >
                     <User size={15} className="inline mr-1" />
@@ -373,12 +341,12 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
                     onClick={() => setWithAccompanist(true)}
                     className={cn(
                       'px-3 py-2.5 rounded-xl text-sm font-medium border-2 transition-colors',
-                      withAccompanist ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                      withAccompanist ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                     )}
                   >
                     <Music size={15} className="inline mr-1" />
                     伴奏付き
-                    <span className="ml-1 text-xs bg-teal-100 text-teal-700 px-1 rounded-full">{accompanistUsers.length}</span>
+                    <span className="ml-1 text-xs bg-blue-100 text-blue-700 px-1 rounded-full">{accompanistUsers.length}</span>
                   </button>
                 </div>
               </div>
@@ -393,10 +361,10 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
                         onClick={() => setSelectedAccompanist(acc.id)}
                         className={cn(
                           'w-full flex items-center gap-3 p-2.5 rounded-xl border-2 transition-colors text-left',
-                          selectedAccompanist === acc.id ? 'border-teal-500 bg-teal-50' : 'border-gray-200 hover:bg-gray-50'
+                          selectedAccompanist === acc.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
                         )}
                       >
-                        <div className="w-8 h-8 bg-teal-100 rounded-full flex items-center justify-center text-teal-700 text-xs font-semibold">
+                        <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 text-xs font-semibold">
                           {getInitials(acc.name)}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -405,7 +373,7 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
                             <p className="text-xs text-amber-600 font-medium mt-0.5">推奨：連続で対応可能です</p>
                           )}
                         </div>
-                        {selectedAccompanist === acc.id && <Check size={16} className="flex-shrink-0 text-teal-600" />}
+                        {selectedAccompanist === acc.id && <Check size={16} className="flex-shrink-0 text-blue-600" />}
                       </button>
                     ))}
                   </div>
@@ -441,7 +409,7 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
             className={cn(
               'w-full py-3 rounded-xl border-2 font-medium text-sm transition-colors',
               myAvailability
-                ? 'border-teal-500 bg-teal-50 text-teal-700'
+                ? 'border-blue-500 bg-blue-50 text-blue-700'
                 : 'border-gray-200 text-gray-600 hover:bg-gray-50'
             )}
           >

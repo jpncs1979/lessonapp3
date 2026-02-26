@@ -100,8 +100,8 @@ export default function ScheduleBoard() {
               return (
                 <div key={slot.id} className="flex items-start gap-3">
                   <span className="text-xs font-mono text-gray-400 w-10 text-right flex-shrink-0 pt-2.5">{slot.startTime}</span>
-                  <div className="flex-1 rounded-xl border border-dashed border-emerald-200 bg-emerald-50 px-4 py-2.5 flex items-center justify-between">
-                    <span className="text-xs text-emerald-600 font-medium">レッスン可</span>
+                  <div className="flex-1 rounded-xl border border-gray-300 bg-white px-4 py-2.5 flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">空き</span>
                     <span className="text-xs text-gray-400">{slot.startTime}〜{slot.endTime}</span>
                   </div>
                 </div>
@@ -140,33 +140,23 @@ function BoardCard({
   return (
     <div className="flex items-start gap-3">
       <span className="text-xs font-mono text-gray-400 w-10 text-right flex-shrink-0 pt-3">{slot.startTime}</span>
-      <div className={cn(
-        'flex-1 rounded-2xl border p-4 transition-shadow hover:shadow-md',
-        slot.status === 'confirmed' ? 'bg-white border-indigo-100' : 'bg-amber-50 border-amber-200'
-      )}>
+      <div className="flex-1 rounded-2xl border border-blue-300 bg-blue-100 p-4 transition-shadow hover:shadow-md">
         <div className="flex items-start gap-3">
           {/* 順番番号 */}
-          <div className={cn(
-            'w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold flex-shrink-0',
-            slot.status === 'confirmed' ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-200 text-amber-800'
-          )}>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold flex-shrink-0 bg-blue-200 text-blue-800">
             {index}
           </div>
 
           <div className="flex-1 min-w-0">
-            {/* 時刻 */}
-            <div className="flex items-center gap-2 mb-2">
-              <Clock size={13} className="text-gray-400" />
-              <span className="text-sm font-semibold text-gray-900">{slot.startTime} 〜 {slot.endTime}</span>
-              {slot.status === 'pending' && (
-                <span className="text-xs bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full">承認待ち</span>
-              )}
+            <div className="flex items-center gap-2 mb-1.5 text-gray-400 text-xs">
+              <Clock size={12} />
+              <span>{slot.startTime} 〜 {slot.endTime}</span>
             </div>
 
             {/* 生徒 */}
             {student && (
-              <div className="flex items-center gap-2 mb-1.5">
-                <div className="w-7 h-7 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 text-xs font-semibold flex-shrink-0">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-7 h-7 bg-blue-200 rounded-full flex items-center justify-center text-blue-800 text-xs font-semibold flex-shrink-0">
                   {getInitials(student.name)}
                 </div>
                 <p className="text-sm font-medium text-gray-900">{student.name}</p>
@@ -175,9 +165,9 @@ function BoardCard({
 
             {/* 伴奏者 */}
             {accompanist && (
-              <div className="flex items-center gap-1.5 text-teal-700 ml-0.5">
-                <Music size={13} />
-                <span className="text-xs font-medium">伴奏付き：{accompanist.name}</span>
+              <div className="flex items-center gap-1.5 text-gray-600 ml-0.5 text-xs">
+                <Music size={12} />
+                <span>伴奏：{accompanist.name}</span>
               </div>
             )}
 

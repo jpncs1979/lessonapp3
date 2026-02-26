@@ -366,3 +366,21 @@ export async function persistState(
     return { error: e instanceof Error ? e : new Error(String(e)) }
   }
 }
+
+/** 伴奏者の「可能」枠だけを保存（anon 可。先生・生徒に反映するため） */
+export async function persistAccompanistAvailabilities(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  accompanistId: string,
+  slotIds: string[]
+): Promise<{ error: Error | null }> {
+  try {
+    const { error } = await supabase.rpc('set_accompanist_availabilities', {
+      p_accompanist_id: accompanistId,
+      p_slot_ids: slotIds,
+    })
+    if (error) return { error: error as unknown as Error }
+    return { error: null }
+  } catch (e) {
+    return { error: e instanceof Error ? e : new Error(String(e)) }
+  }
+}
