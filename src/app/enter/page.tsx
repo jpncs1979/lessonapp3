@@ -36,7 +36,7 @@ export default function EnterPage() {
       if (cancelled) return
       setLoadError(true)
       setLoading(false)
-    }, 10000)
+    }, 5000)
     fetchAppUsers(supabase)
       .then((users) => {
         if (cancelled) return
@@ -88,7 +88,6 @@ export default function EnterPage() {
             <Music size={32} className="text-white" />
           </div>
           <h1 className="text-2xl font-bold text-gray-900">名前を選択して入る</h1>
-          <p className="text-sm text-gray-500 mt-1">生徒・伴奏者は名簿に名前があれば、名前を選ぶだけで入れます（アカウント登録不要）</p>
         </div>
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">

@@ -47,7 +47,14 @@ export default function TeacherLoginPage() {
     }
     setLoading(true)
     try {
-      const { user: appUser, error: signInError } = await signInWithSupabase(supabase, emailTrim, password)
+      const timeoutMs = 15000
+      const result = await Promise.race([
+        signInWithSupabase(supabase, emailTrim, password),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('タイムアウト')), timeoutMs)
+        ),
+      ])
+      const { user: appUser, error: signInError } = result
       if (signInError) {
         setError(signInError.message || 'メールアドレスまたはパスワードが正しくありません')
         setLoading(false)
@@ -62,8 +69,10 @@ export default function TeacherLoginPage() {
         dispatch({ type: 'LOGIN', payload: appUser })
         router.push('/calendar')
       }
-    } catch {
-      setError('ログインに失敗しました。')
+    } catch (err) {
+      setError(err instanceof Error && err.message === 'タイムアウト'
+        ? '接続がタイムアウトしました。通信を確認して再度お試しください。'
+        : 'ログインに失敗しました。')
       setLoading(false)
     }
   }

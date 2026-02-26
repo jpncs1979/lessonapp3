@@ -466,7 +466,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       hasRestoredRef.current = true
       dispatch({ type: 'SESSION_RESTORE_DONE' })
     }
-    const timeoutId = setTimeout(done, 12000)
+    const timeoutId = setTimeout(done, 5000)
     ;(async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession()
