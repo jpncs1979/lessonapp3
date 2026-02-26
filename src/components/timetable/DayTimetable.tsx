@@ -326,7 +326,7 @@ function TimeSlotRow({
 
   const handleSlotAreaClick = () => {
     if (studentTapToCancel) {
-      if (confirm('この予約をキャンセルしますか？')) onCancel(slot)
+      onCancel(slot)
       return
     }
     if (studentTapForIndividual) {
