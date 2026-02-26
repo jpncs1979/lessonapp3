@@ -24,12 +24,16 @@ export default function TeacherLoginPage() {
         router.push('/calendar')
       }
     } else if (supabase) {
-      getAppUserFromSession(supabase).then((user) => {
+      const timeoutMs = 6000
+      Promise.race([
+        getAppUserFromSession(supabase),
+        new Promise<null>((r) => setTimeout(() => r(null), timeoutMs)),
+      ]).then((user) => {
         if (user?.role === 'teacher') {
           dispatch({ type: 'LOGIN', payload: user })
           router.push('/calendar')
         }
-      })
+      }).catch(() => { /* LockManager 等のエラー時は握りつぶし */ })
     }
   }, [state.currentUser, supabase, dispatch, router])
 
@@ -60,15 +64,18 @@ export default function TeacherLoginPage() {
         setLoading(false)
         return
       }
-      if (appUser) {
-        if (appUser.role !== 'teacher') {
-          setError('先生用のログインです。生徒・伴奏者は「名前を選択して入る」から入ってください。')
-          setLoading(false)
-          return
-        }
-        dispatch({ type: 'LOGIN', payload: appUser })
-        router.push('/calendar')
+      if (!appUser) {
+        setError('このメールは認証できましたが、先生として登録されていません。Supabase の auth_profiles に teacher-1 の紐付けを追加してください。')
+        setLoading(false)
+        return
       }
+      if (appUser.role !== 'teacher') {
+        setError('先生用のログインです。生徒・伴奏者は「名前を選択して入る」から入ってください。')
+        setLoading(false)
+        return
+      }
+      dispatch({ type: 'LOGIN', payload: appUser })
+      router.push('/calendar')
     } catch (err) {
       setError(err instanceof Error && err.message === 'タイムアウト'
         ? '接続がタイムアウトしました。通信を確認して再度お試しください。'

@@ -14,7 +14,11 @@ AS $$
 $$;
 
 -- 生徒・伴奏者は「名前だけで入る」ため anon でもカレンダー等を読めるようにする
+DROP POLICY IF EXISTS "day_settings_select_anon" ON day_settings;
 CREATE POLICY "day_settings_select_anon" ON day_settings FOR SELECT TO anon USING (true);
+DROP POLICY IF EXISTS "lessons_select_anon" ON lessons;
 CREATE POLICY "lessons_select_anon" ON lessons FOR SELECT TO anon USING (true);
+DROP POLICY IF EXISTS "weekly_masters_select_anon" ON weekly_masters;
 CREATE POLICY "weekly_masters_select_anon" ON weekly_masters FOR SELECT TO anon USING (true);
+DROP POLICY IF EXISTS "accompanist_availabilities_select_anon" ON accompanist_availabilities;
 CREATE POLICY "accompanist_availabilities_select_anon" ON accompanist_availabilities FOR SELECT TO anon USING (true);

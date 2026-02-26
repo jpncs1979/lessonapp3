@@ -10,6 +10,7 @@ import { today, formatDateToYYYYMMDD } from '@/lib/schedule'
 import { createSupabaseClient } from '@/lib/supabase/client'
 import {
   getAppUserFromSession,
+  getAppUserByAuthUid,
   fetchAppUsers,
   fetchFullState,
   persistState,
@@ -467,19 +468,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'SESSION_RESTORE_DONE' })
     }
     const timeoutId = setTimeout(done, 5000)
+    const SESSION_LOCK_TIMEOUT_MS = 8000
     ;(async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession()
+        await new Promise((r) => setTimeout(r, 400))
         if (!mounted) return
-        if (session?.user) {
-          const appUser = await getAppUserFromSession(supabase)
-          if (appUser && mounted) {
-            try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
-            dispatch({ type: 'LOGIN', payload: appUser })
-            skipPersistRef.current = true
-            const full = await fetchFullState(supabase)
-            if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
-          }
+        const appUser = await Promise.race([
+          getAppUserFromSession(supabase),
+          new Promise<User | null>((r) => setTimeout(() => r(null), SESSION_LOCK_TIMEOUT_MS)),
+        ]).catch(() => null)
+        if (!mounted) return
+        if (appUser) {
+          try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
+          dispatch({ type: 'LOGIN', payload: appUser })
+          skipPersistRef.current = true
+          const full = await fetchFullState(supabase)
+          if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
         } else {
           try {
             const raw = localStorage.getItem(NAME_ONLY_USER_KEY)
@@ -519,7 +523,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return
       }
       if (event === 'SIGNED_IN' && session?.user) {
-        const appUser = await getAppUserFromSession(supabase)
+        const appUser = await getAppUserByAuthUid(supabase, session.user.id)
         if (appUser) {
           dispatch({ type: 'LOGIN', payload: appUser })
           skipPersistRef.current = true

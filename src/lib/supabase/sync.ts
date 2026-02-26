@@ -34,15 +34,15 @@ type DbLesson = {
 type DbWeeklyMaster = { day_of_week: number; slot_index: number; student_id: string }
 type DbAvailability = { id: string; slot_id: string; accompanist_id: string; created_at: string }
 
-export async function getAppUserFromSession(
-  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
+/** auth_uid から app user を取得（getUser() を呼ばないので LockManager 競合を避けられる） */
+export async function getAppUserByAuthUid(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  authUid: string
 ): Promise<User | null> {
-  const { data: { user: authUser } } = await supabase.auth.getUser()
-  if (!authUser) return null
   const { data: row } = await supabase
     .from('auth_profiles')
     .select('app_user_id, email')
-    .eq('auth_uid', authUser.id)
+    .eq('auth_uid', authUid)
     .single()
   if (!row) return null
   const { data: appUser } = await supabase
@@ -57,6 +57,25 @@ export async function getAppUserFromSession(
     email: row.email ?? '',
     role: appUser.role as User['role'],
   }
+}
+
+let sessionCheckPromise: Promise<User | null> | null = null
+
+/** 同時に複数呼ばれても getSession() は1回だけにし、LockManager の競合を防ぐ */
+export async function getAppUserFromSession(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
+): Promise<User | null> {
+  if (sessionCheckPromise) return sessionCheckPromise
+  sessionCheckPromise = (async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.user) return null
+      return getAppUserByAuthUid(supabase, session.user.id)
+    } finally {
+      sessionCheckPromise = null
+    }
+  })()
+  return sessionCheckPromise
 }
 
 /** 名簿のみ取得（未ログイン時用） */
@@ -229,12 +248,13 @@ export async function signInWithSupabase(
   email: string,
   password: string
 ): Promise<{ user: User | null; error: Error | null }> {
-  const { error: signInError } = await supabase.auth.signInWithPassword({
+  const { data, error: signInError } = await supabase.auth.signInWithPassword({
     email: email.trim(),
     password,
   })
   if (signInError) return { user: null, error: signInError as unknown as Error }
-  const user = await getAppUserFromSession(supabase)
+  if (!data.user) return { user: null, error: null }
+  const user = await getAppUserByAuthUid(supabase, data.user.id)
   return { user, error: null }
 }
 
