@@ -1,14 +1,17 @@
 'use client'
 
-import { use } from 'react'
+import { use, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import DayTimetable from '@/components/timetable/DayTimetable'
 import EndTimeSwitcher from '@/components/timetable/EndTimeSwitcher'
 import { useApp } from '@/lib/store'
 import { getTeacherGroupLabel } from '@/lib/utils'
-import { generateTimeItems } from '@/lib/schedule'
+import { generateTimeItems, formatDateToYYYYMMDD } from '@/lib/schedule'
 import { EndTimeMode } from '@/types'
 import Button from '@/components/ui/Button'
 import { Plus } from 'lucide-react'
+
+const SWIPE_THRESHOLD = 35
 
 /** 日付を「〇月〇日」に（ローカル解釈） */
 function formatDayTitle(dateStr: string): string {
@@ -19,10 +22,40 @@ function formatDayTitle(dateStr: string): string {
 
 export default function DayPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = use(params)
+  const router = useRouter()
   const { state, dispatch, getDaySettings, getLessonsForDate } = useApp()
   const { currentUser, lessons, users } = state
   const settings = getDaySettings(date)
   const isTeacher = currentUser?.role === 'teacher'
+  const touchStartX = useRef<number | null>(null)
+  const touchStartY = useRef<number | null>(null)
+  const swipeContainerRef = useRef<HTMLDivElement>(null)
+
+  const goPrevDay = () => {
+    const [y, m, d] = date.split('-').map(Number)
+    const dt = new Date(y, m - 1, d)
+    dt.setDate(dt.getDate() - 1)
+    router.push(`/day/${formatDateToYYYYMMDD(dt)}`)
+  }
+  const goNextDay = () => {
+    const [y, m, d] = date.split('-').map(Number)
+    const dt = new Date(y, m - 1, d)
+    dt.setDate(dt.getDate() + 1)
+    router.push(`/day/${formatDateToYYYYMMDD(dt)}`)
+  }
+
+  useEffect(() => {
+    const el = swipeContainerRef.current
+    if (!el) return
+    const onMove = (e: TouchEvent) => {
+      if (touchStartX.current == null || touchStartY.current == null) return
+      const dx = e.touches[0].clientX - touchStartX.current
+      const dy = e.touches[0].clientY - touchStartY.current
+      if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) e.preventDefault()
+    }
+    el.addEventListener('touchmove', onMove, { passive: false })
+    return () => el.removeEventListener('touchmove', onMove)
+  }, [])
 
   const teacher = users.find((u) => u.role === 'teacher')
   const scheduleTitle = teacher
@@ -56,9 +89,28 @@ export default function DayPage({ params }: { params: Promise<{ date: string }> 
     })
   }
 
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX
+    touchStartY.current = e.touches[0].clientY
+  }
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current == null) return
+    const dx = e.changedTouches[0].clientX - touchStartX.current
+    touchStartX.current = null
+    touchStartY.current = null
+    if (dx > SWIPE_THRESHOLD) goPrevDay()
+    else if (dx < -SWIPE_THRESHOLD) goNextDay()
+  }
+
   return (
-    <div className="w-full min-w-0 max-w-full overflow-x-hidden">
-      <h1 className="text-xl font-bold text-gray-900 mb-1 truncate">{scheduleTitle}</h1>
+    <div
+      ref={swipeContainerRef}
+      className="w-full min-w-0 max-w-full overflow-x-hidden min-h-[50dvh] touch-pan-y"
+      style={{ touchAction: 'pan-y' }}
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
+      <h1 className="text-base sm:text-xl font-bold text-gray-900 mb-1 truncate">{scheduleTitle}</h1>
 
       {/* 先生用: この日がレッスン日でないとき「枠を生成」 */}
       {isTeacher && !settings.isLessonDay && (

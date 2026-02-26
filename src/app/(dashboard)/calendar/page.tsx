@@ -27,14 +27,16 @@ export default function CalendarPage() {
         : 'レッスン可の枠の確認、自分の予約済みレッスン、個人レッスンまたは伴奏付きレッスンの予約'
 
   return (
-    <div>
-      <h1 className="text-xl font-bold text-gray-900 mb-1">{title}</h1>
-      <p className="text-sm text-gray-500 mb-3">{description}</p>
-      <p className="text-xs text-gray-400 mb-4">
+    <div className="min-h-0 flex flex-col pb-[env(safe-area-inset-bottom)]">
+      <h1 className="text-base sm:text-xl font-bold text-gray-900 mb-0.5 sm:mb-1 truncate">{title}</h1>
+      <p className="text-xs sm:text-sm text-gray-500 mb-2 sm:mb-3 line-clamp-2 sm:line-clamp-none">{description}</p>
+      <p className="text-xs text-gray-400 mb-2 sm:mb-4 hidden sm:block">
         日付をタップすると、その日のスケジュール（時間割）に移動します。
       </p>
 
-      <MonthCalendar />
+      <div className="min-h-0 flex-1 flex flex-col">
+        <MonthCalendar />
+      </div>
     </div>
   )
 }

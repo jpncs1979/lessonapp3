@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { Clock, User, Music, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useApp } from '@/lib/store'
@@ -8,8 +8,6 @@ import { generateTimeItems, formatDate, formatDateToYYYYMMDD } from '@/lib/sched
 import { TimeItem, LessonSlot } from '@/types'
 import { cn, getInitials, formatDeadline, calcProvisionalDeadline, generateId } from '@/lib/utils'
 import BookingModal from '@/components/booking/BookingModal'
-
-const SWIPE_THRESHOLD = 50
 
 interface DayTimetableProps {
   date: string
@@ -22,9 +20,6 @@ export default function DayTimetable({ date }: DayTimetableProps) {
   const [selectedSlot, setSelectedSlot] = useState<LessonSlot | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [studentSameDayError, setStudentSameDayError] = useState<string | null>(null)
-  const touchStartX = useRef<number | null>(null)
-  const touchStartY = useRef<number | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
 
   const settings = getDaySettings(date)
   const lessonsForDate = getLessonsForDate(date)
@@ -143,40 +138,8 @@ export default function DayTimetable({ date }: DayTimetableProps) {
     })
   }
 
-  const onTouchStart = (e: React.TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX
-    touchStartY.current = e.touches[0].clientY
-  }
-  const onTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartX.current == null) return
-    const dx = e.changedTouches[0].clientX - touchStartX.current
-    touchStartX.current = null
-    touchStartY.current = null
-    if (dx > SWIPE_THRESHOLD) prevDate()
-    else if (dx < -SWIPE_THRESHOLD) nextDate()
-  }
-
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-    const onMove = (e: TouchEvent) => {
-      if (touchStartX.current == null || touchStartY.current == null) return
-      const dx = e.touches[0].clientX - touchStartX.current
-      const dy = e.touches[0].clientY - touchStartY.current
-      if (Math.abs(dx) > 15 && Math.abs(dx) > Math.abs(dy)) e.preventDefault()
-    }
-    el.addEventListener('touchmove', onMove, { passive: false })
-    return () => el.removeEventListener('touchmove', onMove)
-  }, [])
-
   return (
-    <div
-      ref={containerRef}
-      className="touch-pan-y"
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
-      style={{ touchAction: 'pan-y' }}
-    >
+    <div>
       {/* 日付ナビゲーション */}
       <div className="flex items-center justify-between mb-4">
         <button onClick={prevDate} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
@@ -387,7 +350,7 @@ function TimeSlotRow({
       <div
         onClick={handleSlotAreaClick}
         className={cn(
-          'flex-1 min-w-0 rounded-xl border p-3 transition-colors',
+          'flex-1 min-w-0 rounded-xl border p-2 sm:p-3 transition-colors',
           (clickable || studentTapForIndividual || studentTapToCancel) && 'cursor-pointer',
           slot.status === 'available' && !isAccompanistMarkedAvailable && 'bg-white border-gray-300 hover:bg-gray-50',
           isAccompanistMarkedAvailable && 'bg-white border-red-300 hover:bg-gray-50',
