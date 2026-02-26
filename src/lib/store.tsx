@@ -452,7 +452,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const supabaseRef = useRef(createSupabaseClient())
 
-  // Supabase 利用時: セッション復元と名簿/データ取得
+  // Supabase 利用時: セッション復元と名簿/データ取得（エラー・ハング時も必ず SESSION_RESTORE_DONE する）
   useEffect(() => {
     const supabase = supabaseRef.current
     if (!supabase) {
@@ -461,44 +461,55 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return
     }
     let mounted = true
-    ;(async () => {
-      const { data: { session } } = await supabase.auth.getSession()
+    const done = () => {
       if (!mounted) return
-      if (session?.user) {
-        const appUser = await getAppUserFromSession(supabase)
-        if (appUser && mounted) {
-          try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
-          dispatch({ type: 'LOGIN', payload: appUser })
-          skipPersistRef.current = true
-          const full = await fetchFullState(supabase)
-          if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
-        }
-      } else {
-        try {
-          const raw = localStorage.getItem(NAME_ONLY_USER_KEY)
-          if (raw && mounted) {
-            const parsed = JSON.parse(raw) as { id: string; name: string; role: string }
-            if (parsed?.id && parsed?.name && (parsed.role === 'student' || parsed.role === 'accompanist')) {
-              const nameOnlyUser: User = { id: parsed.id, name: parsed.name, email: '', role: parsed.role as User['role'] }
-              dispatch({ type: 'LOGIN', payload: nameOnlyUser })
-              skipPersistRef.current = true
-              const full = await fetchFullState(supabase)
-              if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
-              hasRestoredRef.current = true
-              dispatch({ type: 'SESSION_RESTORE_DONE' })
-              return
-            }
-          }
-        } catch { /* ignore */ }
-        const users = await fetchAppUsers(supabase)
-        if (mounted && users.length) {
-          const students = users.filter((u) => u.role === 'student').map((u) => ({ id: u.id, name: u.name }))
-          const accompanists = users.filter((u) => u.role === 'accompanist').map((u) => ({ id: u.id, name: u.name }))
-          dispatch({ type: 'MERGE_REMOTE_STATE', payload: { users, students, accompanists } })
-        }
-      }
       hasRestoredRef.current = true
       dispatch({ type: 'SESSION_RESTORE_DONE' })
+    }
+    const timeoutId = setTimeout(done, 12000)
+    ;(async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!mounted) return
+        if (session?.user) {
+          const appUser = await getAppUserFromSession(supabase)
+          if (appUser && mounted) {
+            try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
+            dispatch({ type: 'LOGIN', payload: appUser })
+            skipPersistRef.current = true
+            const full = await fetchFullState(supabase)
+            if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+          }
+        } else {
+          try {
+            const raw = localStorage.getItem(NAME_ONLY_USER_KEY)
+            if (raw && mounted) {
+              const parsed = JSON.parse(raw) as { id: string; name: string; role: string }
+              if (parsed?.id && parsed?.name && (parsed.role === 'student' || parsed.role === 'accompanist')) {
+                const nameOnlyUser: User = { id: parsed.id, name: parsed.name, email: '', role: parsed.role as User['role'] }
+                dispatch({ type: 'LOGIN', payload: nameOnlyUser })
+                skipPersistRef.current = true
+                const full = await fetchFullState(supabase)
+                if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+                clearTimeout(timeoutId)
+                done()
+                return
+              }
+            }
+          } catch { /* ignore */ }
+          const users = await fetchAppUsers(supabase)
+          if (mounted && users.length) {
+            const students = users.filter((u) => u.role === 'student').map((u) => ({ id: u.id, name: u.name }))
+            const accompanists = users.filter((u) => u.role === 'accompanist').map((u) => ({ id: u.id, name: u.name }))
+            dispatch({ type: 'MERGE_REMOTE_STATE', payload: { users, students, accompanists } })
+          }
+        }
+      } catch {
+        /* ネットワークエラー等でも必ず完了させる */
+      } finally {
+        clearTimeout(timeoutId)
+        done()
+      }
     })()
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted || !supabase) return
