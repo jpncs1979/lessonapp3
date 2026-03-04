@@ -140,19 +140,31 @@ export default function DayTimetable({ date }: DayTimetableProps) {
 
   return (
     <div>
-      {/* 日付ナビゲーション */}
-      <div className="flex items-center justify-between mb-4">
-        <button onClick={prevDate} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
-          <ChevronLeft size={20} className="text-gray-600" />
+      {/* 日付ナビゲーション（タップで前日・翌日に移動・スワイプなし） */}
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <button
+          type="button"
+          onClick={prevDate}
+          className="flex items-center justify-center min-w-[56px] min-h-[56px] px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 active:bg-indigo-100 active:scale-[0.98] transition-colors touch-manipulation select-none"
+          aria-label="前日"
+        >
+          <ChevronLeft size={24} strokeWidth={2.5} className="text-indigo-600 flex-shrink-0" />
+          <span className="text-sm font-medium ml-1">前日</span>
         </button>
-        <div className="text-center">
+        <div className="text-center flex-1 min-w-0">
           <h2 className="text-base font-semibold text-gray-900">{formatDate(date)}</h2>
           {!settings.isLessonDay && (
             <span className="text-xs text-gray-400">レッスンなし</span>
           )}
         </div>
-        <button onClick={nextDate} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
-          <ChevronRight size={20} className="text-gray-600" />
+        <button
+          type="button"
+          onClick={nextDate}
+          className="flex items-center justify-center min-w-[56px] min-h-[56px] px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 active:bg-indigo-100 active:scale-[0.98] transition-colors touch-manipulation select-none"
+          aria-label="翌日"
+        >
+          <span className="text-sm font-medium mr-1">翌日</span>
+          <ChevronRight size={24} strokeWidth={2.5} className="text-indigo-600 flex-shrink-0" />
         </button>
       </div>
 
