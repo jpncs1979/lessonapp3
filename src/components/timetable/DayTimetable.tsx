@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Clock, User, Music, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useApp } from '@/lib/store'
@@ -40,6 +40,15 @@ export default function DayTimetable({ date }: DayTimetableProps) {
     dt.setDate(dt.getDate() + 1)
     router.push(`/day/${formatDateToYYYYMMDD(dt)}`)
   }
+
+  // 前日・翌日ルートを事前読み込み → タップ時の遷移を高速化
+  useEffect(() => {
+    const [y, m, d] = date.split('-').map(Number)
+    const prev = new Date(y, m - 1, d); prev.setDate(prev.getDate() - 1)
+    const next = new Date(y, m - 1, d); next.setDate(next.getDate() + 1)
+    router.prefetch(`/day/${formatDateToYYYYMMDD(prev)}`)
+    router.prefetch(`/day/${formatDateToYYYYMMDD(next)}`)
+  }, [date, router])
 
   const handleSlotClick = (slot: LessonSlot) => {
     if (slot.status === 'break' || slot.status === 'lunch') return
@@ -144,7 +153,8 @@ export default function DayTimetable({ date }: DayTimetableProps) {
       <div className="flex items-center justify-between gap-2 mb-4">
         <button
           type="button"
-          onClick={prevDate}
+          onPointerDown={() => prevDate()}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); prevDate() } }}
           className="flex items-center justify-center min-w-[56px] min-h-[56px] px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 active:bg-indigo-100 active:scale-[0.98] transition-colors touch-manipulation select-none"
           aria-label="前日"
         >
@@ -159,7 +169,8 @@ export default function DayTimetable({ date }: DayTimetableProps) {
         </div>
         <button
           type="button"
-          onClick={nextDate}
+          onPointerDown={() => nextDate()}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nextDate() } }}
           className="flex items-center justify-center min-w-[56px] min-h-[56px] px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 active:bg-indigo-100 active:scale-[0.98] transition-colors touch-manipulation select-none"
           aria-label="翌日"
         >
