@@ -139,12 +139,16 @@ export function generateTimeItems(
       const breakEndMin = breakStartMin + BREAK_DURATION
       const breakEnd = minutesToTime(breakEndMin)
 
-      // 休憩後も終了時間内なら休憩を追加（昼休み直後は除く）
+      // 休憩を追加する条件（次のいずれにも該当しないこと）
+      // - 昼休み直後
+      // - 12:10〜13:00 と重なる休憩（12:10からの休憩はいつも追加しない）
+      // - 休憩後にスロットが入る余地がない（その日のレッスン終了時の休憩は追加しない）
       if (breakEndMin < endMinutes) {
         const isLunchJustEnded = currentTime === LUNCH_END
-        // 昼休み開放時は 12:10〜13:00 と重なる休憩は入れない（次のコマが 12:10 開始になるよう currentTime は進めない）
-        const breakOverlapsLunch = settings.lunchBreakOpen && breakStartMin < lunchEndMin && breakEndMin > lunchStartMin
-        if (!isLunchJustEnded && !breakOverlapsLunch) {
+        const breakAtLunchStart =
+          breakStartMin >= lunchStartMin && breakStartMin < lunchEndMin
+        const noSlotAfterBreak = breakEndMin + SLOT_DURATION > endMinutes
+        if (!isLunchJustEnded && !breakAtLunchStart && !noSlotAfterBreak) {
           items.push({ type: 'break', startTime: currentTime, endTime: breakEnd })
           currentTime = breakEnd
         }
