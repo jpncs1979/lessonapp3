@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { generateTimeItems, getDaySummary, getDaysInMonth, today } from '@/lib/schedule'
 import { cn } from '@/lib/utils'
+import type { EndTimeMode } from '@/types'
 
 const SWIPE_THRESHOLD = 50
 
@@ -13,7 +14,7 @@ const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
 
 export default function MonthCalendar() {
   const router = useRouter()
-  const { state, getDaySettings, getLessonsForDate } = useApp()
+  const { state, dispatch, getDaySettings, getLessonsForDate } = useApp()
   const { currentUser } = state
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
@@ -26,6 +27,92 @@ export default function MonthCalendar() {
   // 前月の末尾で埋める空白
   const blanks = Array(firstDay).fill(null)
   const todayStr = today()
+
+  const isTeacher = currentUser?.role === 'teacher'
+  const PRESS_TO_BULK_MS = 250
+
+  // 先生向け：複数選択モード（短いクリックで選択し、ボタンで一括反映）
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedDates, setSelectedDates] = useState<string[]>([])
+  const multiSelectAnchorRef = useRef<string | null>(null)
+
+  // 半押し（一定時間押下後）で範囲を一括切替する
+  const bulkPressTimerRef = useRef<number | null>(null)
+  const bulkLongPressTriggeredRef = useRef(false)
+  // 長押し成立後の click 発火を抑止（長押し＝切替のみ、クリック＝詳細へ）
+  const suppressNextClickRef = useRef(false)
+  const bulkStartDateRef = useRef<string | null>(null)
+  const bulkTargetIsLessonDayRef = useRef<boolean>(false)
+  const bulkAppliedDatesRef = useRef<Set<string>>(new Set())
+  const [bulkPreview, setBulkPreview] = useState<{ from: string; to: string; target: boolean } | null>(null)
+
+  const parseYYYYMMDDToDate = (dateStr: string) => {
+    const [y, m, d] = dateStr.split('-').map(Number)
+    return new Date(y, m - 1, d)
+  }
+
+  const buildDateRange = (from: string, to: string): string[] => {
+    const start = parseYYYYMMDDToDate(from)
+    const end = parseYYYYMMDDToDate(to)
+    const rangeStart = start.getTime() <= end.getTime() ? start : end
+    const rangeEnd = start.getTime() <= end.getTime() ? end : start
+    const res: string[] = []
+
+    // YYYY-MM-DD はローカル日付として扱う（端末表示とズレないように）
+    const cur = new Date(rangeStart)
+    while (cur.getTime() <= rangeEnd.getTime()) {
+      const y = cur.getFullYear()
+      const m = String(cur.getMonth() + 1).padStart(2, '0')
+      const d = String(cur.getDate()).padStart(2, '0')
+      res.push(`${y}-${m}-${d}`)
+      cur.setDate(cur.getDate() + 1)
+    }
+    return res
+  }
+
+  const isDateInRange = (dateStr: string, from: string, to: string): boolean => {
+    const d = parseYYYYMMDDToDate(dateStr).getTime()
+    const a = parseYYYYMMDDToDate(from).getTime()
+    const b = parseYYYYMMDDToDate(to).getTime()
+    const min = a <= b ? a : b
+    const max = a <= b ? b : a
+    return d >= min && d <= max
+  }
+
+  const applyLessonDay = (dateStr: string, isLessonDay: boolean) => {
+    const settings = getDaySettings(dateStr)
+    dispatch({
+      type: 'UPSERT_DAY_SETTINGS',
+      payload: {
+        ...settings,
+        isLessonDay,
+        // 可能日にしたときのデフォルトは 20:00（後で日付設定で変更可能）
+        ...(isLessonDay ? { endTimeMode: '20:00' as EndTimeMode } : {}),
+      },
+    })
+  }
+
+  const isSelectedDate = (dateStr: string) => selectedDates.includes(dateStr)
+
+  const toggleSelectedDate = (dateStr: string) => {
+    setSelectedDates((prev) => (prev.includes(dateStr) ? prev.filter((d) => d !== dateStr) : [...prev, dateStr]))
+  }
+
+  const applySelectedDates = (isLessonDay: boolean) => {
+    for (const d of selectedDates) applyLessonDay(d, isLessonDay)
+    setSelectedDates([])
+    multiSelectAnchorRef.current = null
+    setSelectMode(false)
+  }
+
+  const applyLessonDayRange = (from: string, to: string, isLessonDay: boolean) => {
+    const dates = buildDateRange(from, to)
+    for (const d of dates) {
+      if (bulkAppliedDatesRef.current.has(d)) continue
+      bulkAppliedDatesRef.current.add(d)
+      applyLessonDay(d, isLessonDay)
+    }
+  }
 
   const prevMonth = () => {
     if (month === 1) { setMonth(12); setYear(y => y - 1) }
@@ -133,6 +220,85 @@ export default function MonthCalendar() {
         </div>
       )}
 
+      {/* 先生向け：操作ガイド */}
+      {isTeacher && (
+        <div className="px-3 py-2 border-b border-gray-100 bg-indigo-50/60 text-[10px] text-indigo-700">
+          <div className="flex items-center justify-center gap-3">
+            <span>クリックで詳細へ、長押しで可能/不可を切替（範囲一括）</span>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectMode((v) => !v)
+                setSelectedDates([])
+                multiSelectAnchorRef.current = null
+                // 長押し/範囲切替の状態をリセット（モード干渉防止）
+                if (bulkPressTimerRef.current != null) window.clearTimeout(bulkPressTimerRef.current)
+                bulkPressTimerRef.current = null
+                bulkLongPressTriggeredRef.current = false
+                bulkStartDateRef.current = null
+                bulkTargetIsLessonDayRef.current = false
+                bulkAppliedDatesRef.current = new Set()
+                setBulkPreview(null)
+              }}
+              className={cn(
+                'px-2 py-1 rounded-lg border text-[10px] font-medium transition-colors',
+                selectMode
+                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                  : 'bg-white/70 border-indigo-200 text-indigo-700 hover:bg-white'
+              )}
+            >
+              複数選択：{selectMode ? 'ON' : 'OFF'}
+            </button>
+          </div>
+          {selectMode && (
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => applySelectedDates(true)}
+                disabled={selectedDates.length === 0}
+                className={cn(
+                  'px-3 py-1.5 rounded-xl border text-[10px] font-medium transition-colors',
+                  selectedDates.length === 0
+                    ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700'
+                )}
+              >
+                選択中を可能
+              </button>
+              <button
+                type="button"
+                onClick={() => applySelectedDates(false)}
+                disabled={selectedDates.length === 0}
+                className={cn(
+                  'px-3 py-1.5 rounded-xl border text-[10px] font-medium transition-colors',
+                  selectedDates.length === 0
+                    ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-gray-200 border-gray-300 text-gray-700 hover:bg-gray-300'
+                )}
+              >
+                選択中を不可
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedDates([])
+                  multiSelectAnchorRef.current = null
+                }}
+                disabled={selectedDates.length === 0}
+                className={cn(
+                  'px-3 py-1.5 rounded-xl border text-[10px] font-medium transition-colors',
+                  selectedDates.length === 0
+                    ? 'bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+                )}
+              >
+                選択解除（{selectedDates.length}）
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 日付グリッド（モバイルでスクロール可能） */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="grid grid-cols-7">
@@ -161,13 +327,110 @@ export default function MonthCalendar() {
           return (
             <div
               key={dateStr}
-              onClick={() => router.push(`/day/${dateStr}`)}
+              onClick={(e) => {
+                if (!isTeacher) {
+                  router.push(`/day/${dateStr}`)
+                  return
+                }
+                if (suppressNextClickRef.current) {
+                  suppressNextClickRef.current = false
+                  return
+                }
+                if (selectMode) {
+                  if (e.shiftKey) {
+                    const anchor = multiSelectAnchorRef.current ?? dateStr
+                    const range = buildDateRange(anchor, dateStr)
+                    multiSelectAnchorRef.current = anchor
+                    setSelectedDates(range)
+                    return
+                  }
+                  multiSelectAnchorRef.current = dateStr
+                  toggleSelectedDate(dateStr)
+                  return
+                }
+                router.push(`/day/${dateStr}`)
+              }}
+              onPointerDown={(e) => {
+                if (!isTeacher) return
+                if (selectMode) return
+                // マウスなら左ボタンのみ
+                if (e.pointerType === 'mouse' && e.button !== 0) return
+
+                bulkLongPressTriggeredRef.current = false
+                bulkStartDateRef.current = dateStr
+                bulkTargetIsLessonDayRef.current = !getDaySettings(dateStr).isLessonDay
+                bulkAppliedDatesRef.current = new Set([dateStr])
+                setBulkPreview({ from: dateStr, to: dateStr, target: bulkTargetIsLessonDayRef.current })
+
+                if (bulkPressTimerRef.current != null) window.clearTimeout(bulkPressTimerRef.current)
+                bulkPressTimerRef.current = window.setTimeout(() => {
+                  bulkLongPressTriggeredRef.current = true
+                  suppressNextClickRef.current = true
+                  // 長押し確定：範囲を一括切替
+                  applyLessonDay(dateStr, bulkTargetIsLessonDayRef.current)
+                }, PRESS_TO_BULK_MS)
+              }}
+              onPointerEnter={() => {
+                if (!isTeacher) return
+                if (!bulkLongPressTriggeredRef.current) return
+                const start = bulkStartDateRef.current
+                if (!start) return
+                setBulkPreview((prev) => {
+                  if (!prev) return prev
+                  return { ...prev, to: dateStr }
+                })
+                applyLessonDayRange(start, dateStr, bulkTargetIsLessonDayRef.current)
+              }}
+              onPointerUp={() => {
+                if (!isTeacher) return
+                if (selectMode) return
+
+                if (bulkPressTimerRef.current != null) {
+                  window.clearTimeout(bulkPressTimerRef.current)
+                  bulkPressTimerRef.current = null
+                }
+
+                const start = bulkStartDateRef.current
+                const target = bulkTargetIsLessonDayRef.current
+                const didLongPress = bulkLongPressTriggeredRef.current
+
+                bulkLongPressTriggeredRef.current = false
+                bulkStartDateRef.current = null
+                bulkTargetIsLessonDayRef.current = false
+                bulkAppliedDatesRef.current = new Set()
+                setBulkPreview(null)
+
+                // 半押しが発動しなかった場合（短いクリック）: その日だけトグルして日程へ
+                if (!didLongPress) {
+                  // クリックは「詳細ページへ遷移のみ」。切替（applyLessonDay）は長押しだけにする
+                  suppressNextClickRef.current = false
+                }
+              }}
+              onPointerCancel={() => {
+                if (!isTeacher) return
+                if (selectMode) return
+                if (bulkPressTimerRef.current != null) {
+                  window.clearTimeout(bulkPressTimerRef.current)
+                  bulkPressTimerRef.current = null
+                }
+                bulkLongPressTriggeredRef.current = false
+                suppressNextClickRef.current = false
+                bulkStartDateRef.current = null
+                bulkTargetIsLessonDayRef.current = false
+                bulkAppliedDatesRef.current = new Set()
+                setBulkPreview(null)
+              }}
               className={cn(
                 'min-h-[52px] sm:min-h-[72px] p-1 sm:p-1.5 border-b border-r border-gray-50 cursor-pointer transition-colors',
                 col === 6 && 'border-r-0',
                 isToday ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50',
                 isPast && 'opacity-60',
-                hasMyAccompaniment && 'ring-2 ring-red-400'
+                hasMyAccompaniment && 'ring-2 ring-red-400',
+                bulkPreview && isDateInRange(dateStr, bulkPreview.from, bulkPreview.to) &&
+                (bulkPreview.target
+                  ? 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100'
+                  : 'bg-gray-100 border-gray-200 hover:bg-gray-100'),
+                selectMode && isSelectedDate(dateStr) && 'ring-2 ring-indigo-500 bg-indigo-50 border-indigo-200'
               )}
             >
               {/* 日付番号 */}

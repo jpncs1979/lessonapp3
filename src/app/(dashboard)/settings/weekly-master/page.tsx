@@ -22,6 +22,9 @@ function key(day_of_week: number, slot_index: number) {
   return `${day_of_week}-${slot_index}`
 }
 
+// 週間マスターで「不可」を表すためのダミーID（students のどれとも一致しない値）
+const BLOCKED_STUDENT_ID = '__blocked__'
+
 export default function WeeklyMasterPage() {
   const { state, dispatch } = useApp()
   const { students, weekly_masters, currentUser } = state
@@ -80,6 +83,7 @@ export default function WeeklyMasterPage() {
       </div>
       <p className="text-sm text-gray-500 mb-4">
         曜日・時間枠ごとに「この時間は誰が受けるか」のテンプレートを設定します。入力後「更新」を押すとカレンダーでの枠生成に反映されます。
+        未割り当ては「空き（available）」、不可は「レッスン不可（blocked）」、学生割当は「授業あり（confirmed）」になります。
       </p>
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
@@ -127,7 +131,8 @@ export default function WeeklyMasterPage() {
                       onChange={(e) => setLocalStudent(day_of_week, row.slot_index, e.target.value)}
                       className="flex-1 max-w-xs border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
                     >
-                      <option value="">（未割り当て）</option>
+                      <option value="">未割り当て（空き）</option>
+                      <option value={BLOCKED_STUDENT_ID}>不可（レッスン不可）</option>
                       {students.map((s) => (
                         <option key={s.id} value={s.id}>{s.name}</option>
                       ))}

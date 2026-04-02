@@ -10,6 +10,8 @@ import { EndTimeMode } from '@/types'
 import Button from '@/components/ui/Button'
 import { Plus } from 'lucide-react'
 
+const BLOCKED_STUDENT_ID = '__blocked__'
+
 /** 日付を「〇月〇日」に（ローカル解釈） */
 function formatDayTitle(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number)
@@ -47,10 +49,15 @@ export default function DayPage({ params }: { params: Promise<{ date: string }> 
       if (item.type !== 'slot' || !item.slot || existingIds.has(item.slot.id)) return
       const slot_index = typeof item.slotIndex === 'number' ? item.slotIndex - 1 : 0
       const student_id = masterMap.get(String(slot_index))
+      const isBlocked = student_id === BLOCKED_STUDENT_ID
       const payload = {
         ...item.slot,
-        status: student_id ? ('confirmed' as const) : ('available' as const),
-        ...(student_id ? { studentId: student_id } : {}),
+        // 週間マスターの意味:
+        // - 未割り当て（レコードなし）: 空き（available）にして、あとからレッスンを入れられる
+        // - 学生が割り当てられている（付加）: その授業を確定（confirmed）
+        // - 「不可」: blocked（レッスン不可）
+        status: isBlocked ? ('blocked' as const) : student_id ? ('confirmed' as const) : ('available' as const),
+        ...(student_id && !isBlocked ? { studentId: student_id } : {}),
       }
       dispatch({ type: 'ADD_LESSON', payload })
     })
