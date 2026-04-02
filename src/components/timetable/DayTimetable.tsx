@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Clock, User, Music, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useApp } from '@/lib/store'
@@ -21,7 +21,7 @@ export default function DayTimetable({ date }: DayTimetableProps) {
   const { currentUser, lessons } = state
   const [selectedSlot, setSelectedSlot] = useState<LessonSlot | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
-  const [sameDayMessage, setSameDayMessage] = useState<string | null>(null)
+  const [studentSameDayError, setStudentSameDayError] = useState<string | null>(null)
 
   const settings = getDaySettings(date)
   const lessonsForDate = getLessonsForDate(date)
@@ -43,10 +43,19 @@ export default function DayTimetable({ date }: DayTimetableProps) {
     router.push(`/day/${formatDateToYYYYMMDD(dt)}`)
   }
 
+  // 前日・翌日ルートを事前読み込み → タップ時の遷移を高速化
+  useEffect(() => {
+    const [y, m, d] = date.split('-').map(Number)
+    const prev = new Date(y, m - 1, d); prev.setDate(prev.getDate() - 1)
+    const next = new Date(y, m - 1, d); next.setDate(next.getDate() + 1)
+    router.prefetch(`/day/${formatDateToYYYYMMDD(prev)}`)
+    router.prefetch(`/day/${formatDateToYYYYMMDD(next)}`)
+  }, [date, router])
+
   const handleSlotClick = (slot: LessonSlot) => {
     if (slot.status === 'break' || slot.status === 'lunch') return
     const supabase = createSupabaseClient()
-    // 先生: 不可枠は1タップでレッスン可に。空き枠・確定枠はモーダルで生徒・伴奏者を指定／変更
+    // 先生: 不可枠は1タップでレッスン可に。空き枠も1タップで不可に。確定・保留はモーダルで生徒・伴奏者を指定／変更
     if (isTeacher) {
       if (slot.status === 'blocked') {
         const inState = lessons.some((l) => l.id === slot.id)
@@ -57,7 +66,16 @@ export default function DayTimetable({ date }: DayTimetableProps) {
         }
         return
       }
-      // available / confirmed のときはモーダルを開いて生徒・伴奏者を指定または変更
+      if (slot.status === 'available') {
+        const inState = lessons.some((l) => l.id === slot.id)
+        if (inState) {
+          dispatch({ type: 'UPDATE_LESSON', payload: { id: slot.id, status: 'blocked' } })
+        } else {
+          dispatch({ type: 'ADD_LESSON', payload: { ...slot, status: 'blocked' } })
+        }
+        return
+      }
+      // confirmed / pending のときはモーダルで生徒・伴奏者を変更
       setSelectedSlot(slot)
       setModalOpen(true)
       return
@@ -129,15 +147,15 @@ export default function DayTimetable({ date }: DayTimetableProps) {
 
   const handleBookForStudent = (slot: LessonSlot, accompanistId?: string) => {
     if (!currentUser || currentUser.role !== 'student') return
-    const otherOnSameDay = lessonsForDate.some(
+    const alreadyHasLesson = lessonsForDate.some(
       (l) => l.id !== slot.id && (l.status === 'confirmed' || l.status === 'pending') && l.studentId === currentUser.id
     )
-    if (otherOnSameDay) {
-      setSameDayMessage('同じ日には1回までです。')
-      setTimeout(() => setSameDayMessage(null), 3000)
+    if (alreadyHasLesson) {
+      setStudentSameDayError('同じ日にはレッスンは1回までです。')
+      setTimeout(() => setStudentSameDayError(null), 4000)
       return
     }
-    setSameDayMessage(null)
+    setStudentSameDayError(null)
     dispatch({
       type: 'UPDATE_LESSON',
       payload: {
@@ -189,34 +207,35 @@ export default function DayTimetable({ date }: DayTimetableProps) {
     }
   }
 
-  const totalSlots = items.filter((i) => i.type === 'slot').length
-  const availableSlots = items.filter((i) => i.type === 'slot' && i.slot?.status === 'available').length
-  const confirmedSlots = items.filter((i) => i.type === 'slot' && i.slot?.status === 'confirmed').length
-
   return (
     <div>
-      {/* 日付ナビゲーション */}
-      <div className="flex items-center justify-between mb-4">
-        <button onClick={prevDate} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
-          <ChevronLeft size={20} className="text-gray-600" />
+      {/* 日付ナビゲーション（タップで前日・翌日に移動・スワイプなし） */}
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <button
+          type="button"
+          onPointerDown={() => prevDate()}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); prevDate() } }}
+          className="flex items-center justify-center min-w-[56px] min-h-[56px] px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 active:bg-indigo-100 active:scale-[0.98] transition-colors touch-manipulation select-none"
+          aria-label="前日"
+        >
+          <ChevronLeft size={24} strokeWidth={2.5} className="text-indigo-600 flex-shrink-0" />
+          <span className="text-sm font-medium ml-1">前日</span>
         </button>
-        <div className="text-center">
+        <div className="text-center flex-1 min-w-0">
           <h2 className="text-base font-semibold text-gray-900">{formatDate(date)}</h2>
-          {settings.isLessonDay ? (
-            <div className="flex items-center justify-center gap-2 mt-0.5">
-              <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium',
-                settings.endTimeMode === '20:00' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
-              )}>
-                〜{settings.endTimeMode}
-              </span>
-              <span className="text-xs text-gray-500">{totalSlots}コマ / レッスン可{availableSlots} / 確定{confirmedSlots}</span>
-            </div>
-          ) : (
+          {!settings.isLessonDay && (
             <span className="text-xs text-gray-400">レッスンなし</span>
           )}
         </div>
-        <button onClick={nextDate} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
-          <ChevronRight size={20} className="text-gray-600" />
+        <button
+          type="button"
+          onPointerDown={() => nextDate()}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); nextDate() } }}
+          className="flex items-center justify-center min-w-[56px] min-h-[56px] px-4 py-3 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 active:bg-indigo-100 active:scale-[0.98] transition-colors touch-manipulation select-none"
+          aria-label="翌日"
+        >
+          <span className="text-sm font-medium mr-1">翌日</span>
+          <ChevronRight size={24} strokeWidth={2.5} className="text-indigo-600 flex-shrink-0" />
         </button>
       </div>
 
@@ -243,10 +262,11 @@ export default function DayTimetable({ date }: DayTimetableProps) {
         </div>
       )}
 
-      {sameDayMessage && (
-        <p className="mb-3 text-sm text-amber-700 bg-amber-50 px-4 py-2 rounded-xl">
-          {sameDayMessage}
-        </p>
+      {/* 生徒：同日にすでにレッスンがあるときのメッセージ */}
+      {studentSameDayError && currentUser?.role === 'student' && (
+        <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
+          {studentSameDayError}
+        </div>
       )}
 
       {/* タイムライン */}
@@ -267,7 +287,20 @@ export default function DayTimetable({ date }: DayTimetableProps) {
               isTeacher={isTeacher}
               isAccompanist={isAccompanist}
               isStudent={currentUser?.role === 'student'}
+              studentAlreadyHasLessonOnThisDay={
+                currentUser?.role === 'student' &&
+                lessonsForDate.some(
+                  (l) => (l.status === 'confirmed' || l.status === 'pending') && l.studentId === currentUser.id
+                )
+              }
               onSlotClick={handleSlotClick}
+              onTeacherOpenAssignModal={() => {
+                const slot = item.type === 'slot' && item.slot ? item.slot : null
+                if (slot) {
+                  setSelectedSlot(slot)
+                  setModalOpen(true)
+                }
+              }}
               onBook={handleBookForStudent}
               onCancel={handleCancelForStudent}
               getUserById={getUserById}
@@ -296,7 +329,11 @@ interface TimeSlotRowProps {
   isTeacher: boolean
   isAccompanist: boolean
   isStudent: boolean
+  /** 生徒がこの日すでにレッスン予約済み（同じ日は1回まで） */
+  studentAlreadyHasLessonOnThisDay?: boolean
   onSlotClick: (slot: LessonSlot) => void
+  /** 先生が空き枠で「生徒を指定」を押したときにモーダルを開く */
+  onTeacherOpenAssignModal?: () => void
   onBook: (slot: LessonSlot, accompanistId?: string) => void
   onCancel: (slot: LessonSlot) => void
   getUserById: (id?: string) => import('@/types').User | undefined
@@ -317,7 +354,7 @@ function getAdjacentConfirmedAccompanistIds(items: TimeItem[], index: number): s
 }
 
 function TimeSlotRow({
-  item, items, itemIndex, currentUserId, isTeacher, isAccompanist, isStudent, onSlotClick, onBook, onCancel, getUserById, getAvailabilitiesForSlot
+  item, items, itemIndex, currentUserId, isTeacher, isAccompanist, isStudent, studentAlreadyHasLessonOnThisDay, onSlotClick, onTeacherOpenAssignModal, onBook, onCancel, getUserById, getAvailabilitiesForSlot
 }: TimeSlotRowProps) {
   if (item.type === 'break') {
     return (
@@ -360,15 +397,21 @@ function TimeSlotRow({
     : []
 
   const clickable = !['break', 'lunch'].includes(slot.status) && (isTeacher || isAccompanist)
-  const studentTapForIndividual = isStudent && slot.status === 'available'
+  const studentTapForIndividual = isStudent && slot.status === 'available' && !studentAlreadyHasLessonOnThisDay
   const hasAccompanistAvailable = slot.status === 'available' && availabilities.length > 0
-  const isConfirmedIndividual = slot.status === 'confirmed' && !accompanist
-  const isConfirmedAccompanied = slot.status === 'confirmed' && accompanist
   const isMine = isMyLesson || myAvailability || slot.accompanistId === currentUserId
   const isAccompanistCanAdd = isAccompanist && slot.status === 'confirmed' && slot.studentId && !slot.accompanistId
   const isAccompanistCanRemove = isAccompanist && slot.status === 'confirmed' && slot.accompanistId === currentUserId
+  const isAccompanistMarkedAvailable = isAccompanist && slot.status === 'available' && myAvailability
+  const isAccompanistMyLesson = isAccompanist && (slot.status === 'confirmed' || slot.status === 'pending') && slot.accompanistId === currentUserId
+
+  const studentTapToCancel = isStudent && (slot.status === 'confirmed' || slot.status === 'pending') && isMyLesson
 
   const handleSlotAreaClick = () => {
+    if (studentTapToCancel) {
+      onCancel(slot)
+      return
+    }
     if (studentTapForIndividual) {
       onBook(slot)
       return
@@ -376,25 +419,27 @@ function TimeSlotRow({
     if (clickable) onSlotClick(slot)
   }
 
+  const handleTeacherAssignClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onTeacherOpenAssignModal?.()
+  }
+
   return (
-    <div className="flex items-start gap-3">
-      <div className="flex flex-col items-end w-10 flex-shrink-0 pt-2">
+    <div className="flex items-start gap-2 sm:gap-3 min-w-0">
+      <div className="flex flex-col items-end w-9 sm:w-10 flex-shrink-0 pt-2">
         <span className="text-xs font-mono text-gray-500">{slot.startTime}</span>
       </div>
 
       <div
         onClick={handleSlotAreaClick}
         className={cn(
-          'flex-1 rounded-xl border p-3 transition-colors',
-          (clickable || studentTapForIndividual) && 'cursor-pointer',
-          slot.status === 'available' && 'border-2 border-red-500',
-          slot.status === 'available' && !hasAccompanistAvailable && 'bg-white hover:bg-gray-50',
-          slot.status === 'available' && hasAccompanistAvailable && 'bg-teal-50 hover:bg-teal-100',
-          slot.status === 'pending' && 'bg-amber-50 border-amber-200 hover:bg-amber-100',
-          isConfirmedIndividual && 'bg-blue-50 border-blue-200',
-          isConfirmedAccompanied && 'bg-emerald-50 border-emerald-200',
-          slot.status === 'blocked' && 'bg-gray-100 border-gray-200',
-          isMine && 'ring-2 ring-offset-1 ring-indigo-400',
+          'flex-1 min-w-0 rounded-xl border p-2 sm:p-3 transition-colors',
+          (clickable || studentTapForIndividual || studentTapToCancel) && 'cursor-pointer',
+          slot.status === 'available' && !isAccompanistMarkedAvailable && 'bg-white border-gray-300 hover:bg-gray-50',
+          isAccompanistMarkedAvailable && 'bg-white border-red-300 hover:bg-gray-50',
+          (slot.status === 'confirmed' || slot.status === 'pending') && !(isStudent && isMyLesson) && !isAccompanistMyLesson && 'bg-blue-100 border-blue-300',
+          ((slot.status === 'confirmed' || slot.status === 'pending') && (isStudent && isMyLesson || isAccompanistMyLesson)) && 'bg-red-50 border-red-300',
+          slot.status === 'blocked' && 'bg-gray-200 border-gray-300',
         )}
       >
         <div className="flex items-center justify-between mb-1">
@@ -402,77 +447,88 @@ function TimeSlotRow({
           <span className="text-xs text-gray-400">{slot.roomName}</span>
         </div>
 
-        {/* 確定済み・承認待ち: 名前と伴奏者 */}
+        {/* 枠内の説明は「空き」と「不可」のみ。予約済みは生徒名（伴奏：〇〇）、伴奏者自分の枠は伴奏者名（生徒名） */}
+        {slot.status === 'available' && !isAccompanistMarkedAvailable && (
+          <p className="text-sm font-medium text-gray-700 mt-1">空き</p>
+        )}
+        {isAccompanistMarkedAvailable && (
+          <p className="text-sm text-gray-900 mt-1">
+            {getUserById(currentUserId)?.name}（未定）
+          </p>
+        )}
         {(slot.status === 'confirmed' || slot.status === 'pending') && (student || accompanist) && (
-          <div className="mt-2">
-            {student && (
-              <p className={cn('font-semibold text-gray-900', isConfirmedIndividual ? 'text-blue-900' : 'text-emerald-900')}>
+          <div className="mt-1">
+            {isAccompanistMyLesson ? (
+              <p className="text-sm text-gray-900">
+                {accompanist?.name}（{student?.name ?? '—' }）
+              </p>
+            ) : student ? (
+              <p className="text-sm text-gray-900">
                 {student.name}
-                {isMyLesson && <span className="text-indigo-600 ml-1">（あなた）</span>}
+                {accompanist && <span className="text-gray-600">（伴奏：{accompanist.name}）</span>}
               </p>
-            )}
-            {accompanist && (
-              <p className="text-sm text-teal-700 mt-0.5 flex items-center gap-1">
-                <Music size={12} />
-                伴奏付き：{accompanist.name}
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* 生徒: 自分の予約は1タップでキャンセル */}
-        {isStudent && (slot.status === 'pending' || slot.status === 'confirmed') && isMyLesson && (
-          <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              onClick={() => onCancel(slot)}
-              className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-red-100 text-red-700 hover:bg-red-200"
-            >
-              キャンセル
-            </button>
-          </div>
-        )}
-
-        {/* 空き枠: 伴奏者・先生用の表示 */}
-        {!isStudent && slot.status === 'available' && (
-          <div className="mt-2 space-y-1">
-            {hasAccompanistAvailable ? (
-              <>
-                {isAccompanist && (
-                  <>
-                    <p className="text-xs text-teal-700">{availabilities.map((a) => getUserById(a.accompanistId)?.name).filter(Boolean).join('、')}</p>
-                    <p className="text-xs text-teal-600">{myAvailability ? 'タップで解除' : 'タップで追加'}</p>
-                  </>
-                )}
-              </>
             ) : (
-              <>
-                {isTeacher && <p className="text-xs text-gray-400 mt-1">レッスン可</p>}
-                {isAccompanist && <p className="text-xs text-teal-600 mt-1">タップで伴奏付きレッスン可に</p>}
-              </>
+              accompanist && (
+                <p className="text-xs text-gray-600 flex items-center gap-1">
+                  <Music size={12} />
+                  伴奏：{accompanist.name}
+                </p>
+              )
+            )}
+          </div>
+        )}
+        {slot.status === 'blocked' && (
+          <p className="text-sm font-medium text-gray-500 mt-1">不可</p>
+        )}
+
+        {/* 生徒：同じ日にすでに予約済みのときは追加予約不可 */}
+        {isStudent && slot.status === 'available' && studentAlreadyHasLessonOnThisDay && (
+          <p className="text-xs text-gray-500 font-medium mt-1">この日は予約済み</p>
+        )}
+        {/* 空き枠: 伴奏者・先生用の表示（伴奏者が自分で「可」にした枠では表示しない） */}
+        {!isStudent && slot.status === 'available' && !isAccompanistMarkedAvailable && (
+          <div className="mt-2 space-y-1">
+            {isTeacher && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-gray-400">タップで不可に</span>
+                <button
+                  type="button"
+                  onClick={handleTeacherAssignClick}
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700 underline"
+                >
+                  生徒を指定
+                </button>
+              </div>
+            )}
+            {hasAccompanistAvailable ? (
+              isAccompanist && (
+                <>
+                  <p className="text-xs text-gray-600">{availabilities.map((a) => getUserById(a.accompanistId)?.name).filter(Boolean).join('、')}</p>
+                  <p className="text-xs text-gray-500">{myAvailability ? 'タップで解除' : 'タップで追加'}</p>
+                </>
+              )
+            ) : (
+              isAccompanist && <p className="text-xs text-gray-500 mt-1">タップで伴奏付きレッスン可に</p>
             )}
           </div>
         )}
 
         {/* 伴奏者: 確定済み個人レッスン（すでに生徒が入っている枠）にも伴奏可を追加できる */}
         {isAccompanist && isAccompanistCanAdd && (
-          <p className="text-xs text-teal-600 mt-1">タップで伴奏可を追加</p>
+          <p className="text-xs text-gray-500 mt-1">タップで伴奏可を追加</p>
         )}
         {isAccompanist && isAccompanistCanRemove && (
-          <p className="text-xs text-teal-600 mt-1">タップで伴奏可を解除</p>
+          <p className="text-xs text-gray-500 mt-1">タップで伴奏可を解除</p>
         )}
 
         {slot.status === 'blocked' && isTeacher && (
-          <p className="text-xs text-gray-400 mt-1">タップでレッスン可に</p>
-        )}
-        {slot.status === 'blocked' && (isStudent || isAccompanist) && (
-          <p className="text-xs text-gray-500 font-medium mt-1">不可</p>
+          <p className="text-xs text-gray-500 mt-1">タップでレッスン可に</p>
         )}
       </div>
 
-      {/* 枠外に伴奏者スタンプ（生徒はタップで伴奏付き予約、先生は表示のみ） */}
-      {(isStudent || isTeacher) && slot.status === 'available' && availabilities.length > 0 && (
-        <div className="flex flex-col gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+      {/* 枠外に伴奏者スタンプ（生徒はタップで伴奏付き予約、先生は表示のみ。生徒は同日に1回までなので予約済みなら出さない） */}
+      {((isStudent && !studentAlreadyHasLessonOnThisDay) || isTeacher) && slot.status === 'available' && availabilities.length > 0 && (
+        <div className="flex flex-col gap-1 flex-shrink-0 flex-wrap max-w-[40%] sm:max-w-none" onClick={(e) => e.stopPropagation()}>
           {availabilities.map((a) => {
             const acc = getUserById(a.accompanistId)
             return acc ? (
@@ -481,7 +537,7 @@ function TimeSlotRow({
                   key={a.accompanistId}
                   type="button"
                   onClick={() => onBook(slot, a.accompanistId)}
-                  className="px-2 py-1 rounded-md text-xs font-medium bg-teal-100 text-teal-700 hover:bg-teal-200 border border-teal-200 whitespace-nowrap"
+                  className="px-2 py-1 rounded-md text-xs font-medium bg-green-100 text-green-700 hover:bg-green-200 border border-green-200 whitespace-nowrap"
                   title={`${acc.name} 伴奏付きで予約`}
                 >
                   <Music size={10} className="inline mr-0.5" />
@@ -490,7 +546,7 @@ function TimeSlotRow({
               ) : (
                 <span
                   key={a.accompanistId}
-                  className="px-2 py-1 rounded-md text-xs font-medium bg-teal-100 text-teal-700 border border-teal-200 whitespace-nowrap inline-flex items-center"
+                  className="px-2 py-1 rounded-md text-xs font-medium bg-green-100 text-green-700 border border-green-200 whitespace-nowrap inline-flex items-center"
                 >
                   <Music size={10} className="inline mr-0.5" />
                   {acc.name}

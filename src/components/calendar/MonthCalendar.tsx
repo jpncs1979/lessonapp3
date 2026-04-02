@@ -1,11 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { generateTimeItems, getDaySummary, getDaysInMonth, today } from '@/lib/schedule'
 import { cn } from '@/lib/utils'
+
+const SWIPE_THRESHOLD = 50
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
 
@@ -16,6 +18,7 @@ export default function MonthCalendar() {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1)
+  const touchStartX = useRef<number | null>(null)
 
   const days = getDaysInMonth(year, month)
   const firstDay = new Date(year, month - 1, 1).getDay() // 0=日
@@ -31,6 +34,17 @@ export default function MonthCalendar() {
   const nextMonth = () => {
     if (month === 12) { setMonth(1); setYear(y => y + 1) }
     else setMonth(m => m + 1)
+  }
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX
+  }
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current == null) return
+    const dx = e.changedTouches[0].clientX - touchStartX.current
+    touchStartX.current = null
+    if (dx > SWIPE_THRESHOLD) prevMonth()
+    else if (dx < -SWIPE_THRESHOLD) nextMonth()
   }
 
   const getDayInfo = (dateStr: string) => {
@@ -61,6 +75,8 @@ export default function MonthCalendar() {
 
     if (currentUser.role === 'teacher') {
       if (!isLessonDay) return { text: '不可', className: 'text-gray-300' }
+      const available = dayInfo!.available ?? 0
+      if (available === 0) return { text: '空き無し', className: 'text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full font-medium' }
       const confirmedOrPending = lessons.filter((l) => l.status === 'confirmed' || l.status === 'pending')
       const n = confirmedOrPending.length
       if (n > 0) return { text: `レッスンあり ${n}`, className: 'text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium' }
@@ -76,27 +92,31 @@ export default function MonthCalendar() {
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+    <div
+      className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden touch-pan-y max-h-[calc(100dvh-8rem)] sm:max-h-none flex flex-col sm:block"
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
       {/* ヘッダー */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-        <button onClick={prevMonth} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+      <div className="flex items-center justify-between px-3 sm:px-5 py-2.5 sm:py-4 border-b border-gray-100 flex-shrink-0">
+        <button onClick={prevMonth} className="p-1.5 sm:p-2 rounded-lg hover:bg-gray-100 transition-colors">
           <ChevronLeft size={18} className="text-gray-600" />
         </button>
-        <h2 className="text-base font-semibold text-gray-900">
+        <h2 className="text-sm sm:text-base font-semibold text-gray-900">
           {year}年 {month}月
         </h2>
-        <button onClick={nextMonth} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+        <button onClick={nextMonth} className="p-1.5 sm:p-2 rounded-lg hover:bg-gray-100 transition-colors">
           <ChevronRight size={18} className="text-gray-600" />
         </button>
       </div>
 
       {/* 曜日ヘッダー */}
-      <div className="grid grid-cols-7 border-b border-gray-100">
+      <div className="grid grid-cols-7 border-b border-gray-100 flex-shrink-0">
         {WEEKDAYS.map((w, i) => (
           <div
             key={w}
             className={cn(
-              'py-2 text-center text-xs font-medium',
+              'py-1 sm:py-2 text-center text-[10px] sm:text-xs font-medium',
               i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-gray-500'
             )}
           >
@@ -113,10 +133,11 @@ export default function MonthCalendar() {
         </div>
       )}
 
-      {/* 日付グリッド */}
-      <div className="grid grid-cols-7">
+      {/* 日付グリッド（モバイルでスクロール可能） */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="grid grid-cols-7">
         {blanks.map((_, i) => (
-          <div key={`blank-${i}`} className="min-h-[72px] border-b border-r border-gray-50 last:border-r-0" />
+          <div key={`blank-${i}`} className="min-h-[52px] sm:min-h-[72px] border-b border-r border-gray-50 last:border-r-0" />
         ))}
 
         {days.map((dateStr, i) => {
@@ -142,7 +163,7 @@ export default function MonthCalendar() {
               key={dateStr}
               onClick={() => router.push(`/day/${dateStr}`)}
               className={cn(
-                'min-h-[72px] p-1.5 border-b border-r border-gray-50 cursor-pointer transition-colors',
+                'min-h-[52px] sm:min-h-[72px] p-1 sm:p-1.5 border-b border-r border-gray-50 cursor-pointer transition-colors',
                 col === 6 && 'border-r-0',
                 isToday ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-gray-50',
                 isPast && 'opacity-60',
@@ -150,10 +171,10 @@ export default function MonthCalendar() {
               )}
             >
               {/* 日付番号 */}
-              <div className="flex flex-col items-center justify-center mb-1">
+              <div className="flex flex-col items-center justify-center mb-0.5 sm:mb-1">
                 <span
                   className={cn(
-                    'w-7 h-7 flex items-center justify-center rounded-full text-sm font-medium',
+                    'w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-full text-xs sm:text-sm font-medium',
                     isToday
                       ? 'bg-indigo-600 text-white'
                       : col === 0
@@ -182,19 +203,7 @@ export default function MonthCalendar() {
             </div>
           )
         })}
-      </div>
-
-      {/* 凡例（役割により表示が異なるため簡易表示） */}
-      <div className="flex items-center gap-4 px-5 py-3 bg-gray-50 text-xs text-gray-500">
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-emerald-400" />空き・空きあり
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-indigo-400" />レッスンあり
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-gray-300" />不可・なし
-        </span>
+        </div>
       </div>
     </div>
   )

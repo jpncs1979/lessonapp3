@@ -62,19 +62,15 @@ export function isStaleAuthSessionError(err: unknown): boolean {
   )
 }
 
-export async function getAppUserFromSession(
-  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
+/** auth_uid から app user を取得（getUser() を呼ばないので LockManager 競合を避けられる） */
+export async function getAppUserByAuthUid(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  authUid: string
 ): Promise<User | null> {
-  const { data: { user: authUser }, error: authError } = await supabase.auth.getUser()
-  if (authError) {
-    if (isStaleAuthSessionError(authError)) await clearStaleSupabaseSession(supabase)
-    return null
-  }
-  if (!authUser) return null
   const { data: row } = await supabase
     .from('auth_profiles')
     .select('app_user_id, email')
-    .eq('auth_uid', authUser.id)
+    .eq('auth_uid', authUid)
     .single()
   if (!row) return null
   const { data: appUser } = await supabase
@@ -89,6 +85,29 @@ export async function getAppUserFromSession(
     email: row.email ?? '',
     role: appUser.role as User['role'],
   }
+}
+
+let sessionCheckPromise: Promise<User | null> | null = null
+
+/** 同時に複数呼ばれても getSession() は1回だけにし、LockManager の競合を防ぐ */
+export async function getAppUserFromSession(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
+): Promise<User | null> {
+  if (sessionCheckPromise) return sessionCheckPromise
+  sessionCheckPromise = (async () => {
+    try {
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError && isStaleAuthSessionError(sessionError)) {
+        await clearStaleSupabaseSession(supabase)
+        return null
+      }
+      if (!session?.user) return null
+      return getAppUserByAuthUid(supabase, session.user.id)
+    } finally {
+      sessionCheckPromise = null
+    }
+  })()
+  return sessionCheckPromise
 }
 
 /** 名簿のみ取得（未ログイン時用） */
@@ -174,40 +193,85 @@ export async function fetchFullState(
   }
 }
 
-/** 登録済みか（auth_profiles に app_user_id があるか） */
+/** 「名前を選択して入る」用：登録済みの生徒・伴奏者だけ（先生は含まない） */
+export async function fetchRegisteredUsersForEnter(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
+): Promise<AppState['users']> {
+  const { data: rows, error } = await supabase.rpc('get_registered_users_for_enter')
+  if (error || !rows?.length) return []
+  return (rows as { id: string; name: string; role: string }[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    email: '',
+    role: r.role as User['role'],
+  }))
+}
+
+/** 「新規登録」用：名簿にいるがまだ登録（auth_profiles）していない人だけ */
+export async function fetchUnregisteredUsers(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
+): Promise<AppState['users']> {
+  const { data: rows, error } = await supabase.rpc('get_unregistered_users')
+  if (error || !rows?.length) return []
+  return (rows as { id: string; name: string; role: string }[]).map((r) => ({
+    id: r.id,
+    name: r.name,
+    email: '',
+    role: r.role as User['role'],
+  }))
+}
+
+/** 登録済みか（auth_profiles に app_user_id があるか）。未ログインでも RPC で判定可能 */
 export async function isAppUserRegistered(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   appUserId: string
 ): Promise<boolean> {
-  const { data } = await supabase
-    .from('auth_profiles')
-    .select('app_user_id')
-    .eq('app_user_id', appUserId)
-    .maybeSingle()
-  return !!data
+  const { data, error } = await supabase.rpc('check_app_user_registered', {
+    p_app_user_id: appUserId,
+  })
+  if (error) return false
+  return data === true
 }
 
-/** サインアップ＋auth_profiles 登録 */
+/** サインアップ＋auth_profiles に RPC で1行挿入 */
 export async function registerWithSupabase(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   appUserId: string,
   email: string,
   password: string
 ): Promise<{ error: Error | null }> {
-  const { data: { user }, error: signUpError } = await supabase.auth.signUp({
-    email: email.trim(),
+  const emailTrim = email.trim()
+  const { data: { user, session }, error: signUpError } = await supabase.auth.signUp({
+    email: emailTrim,
     password,
-    options: { data: { app_user_id: appUserId } },
+    options: {
+      data: {
+        app_user_id: appUserId,
+        email: emailTrim,
+      },
+    },
   })
   if (signUpError) return { error: signUpError as unknown as Error }
   if (!user) return { error: new Error('サインアップに失敗しました') }
-  const { error: insertError } = await supabase.from('auth_profiles').insert({
-    auth_uid: user.id,
-    app_user_id: appUserId,
-    email: email.trim(),
-  })
-  if (insertError) return { error: insertError as unknown as Error }
-  return { error: null }
+
+  // メール確認オフなら session が返る。確認オンだと null になり RPC で Not authenticated になる
+  if (!session) {
+    return { error: new Error('登録にはメール確認が必要です。Supabase の Authentication → Providers → Email で「Confirm email」をオフにすると、確認なしで入れます。') }
+  }
+
+  // セッション反映を待ってから RPC で auth_profiles に挿入（リトライあり）
+  let lastError: Error | null = null
+  for (let i = 0; i < 3; i++) {
+    await new Promise((r) => setTimeout(r, 400 * (i + 1)))
+    const { error: rpcError } = await supabase.rpc('insert_my_auth_profile', {
+      p_app_user_id: appUserId,
+      p_email: emailTrim,
+    })
+    if (!rpcError) return { error: null }
+    lastError = rpcError as unknown as Error
+    if (!String(rpcError.message || '').includes('Not authenticated')) return { error: lastError }
+  }
+  return { error: lastError }
 }
 
 /** サインイン（メール・パスワード） */
@@ -216,12 +280,13 @@ export async function signInWithSupabase(
   email: string,
   password: string
 ): Promise<{ user: User | null; error: Error | null }> {
-  const { error: signInError } = await supabase.auth.signInWithPassword({
+  const { data, error: signInError } = await supabase.auth.signInWithPassword({
     email: email.trim(),
     password,
   })
   if (signInError) return { user: null, error: signInError as unknown as Error }
-  const user = await getAppUserFromSession(supabase)
+  if (!data.user) return { user: null, error: null }
+  const user = await getAppUserByAuthUid(supabase, data.user.id)
   return { user, error: null }
 }
 
@@ -238,13 +303,20 @@ export async function persistState(
   state: AppState
 ): Promise<{ error: Error | null }> {
   try {
-    // app_users: 名簿は id で upsert
+    // app_users: 名簿は state.users を正とする。upsert したあと、DB にだけある id は削除
+    const stateUserIds = new Set(state.users.map((u) => u.id))
     for (const u of state.users) {
       const { error } = await supabase.from('app_users').upsert(
         { id: u.id, name: u.name, role: u.role },
         { onConflict: 'id' }
       )
       if (error) return { error: error as unknown as Error }
+    }
+    const { data: existingAppUsers } = await supabase.from('app_users').select('id')
+    const toDelete = (existingAppUsers ?? []).filter((r) => !stateUserIds.has(r.id)).map((r) => r.id)
+    if (toDelete.length > 0) {
+      const { error: delErr } = await supabase.from('app_users').delete().in('id', toDelete)
+      if (delErr) return { error: delErr as unknown as Error }
     }
 
     // day_settings: date で upsert
@@ -423,4 +495,56 @@ export async function deleteActivityLog(
   if (!supabase) return { error: new Error('Supabase 未設定') }
   const { error } = await supabase.from('activity_logs').delete().eq('id', id)
   return { error: error as unknown as Error | null }
+}
+
+/** lessons だけを保存（名前のみの生徒・伴奏者の予約を anon で保存するため） */
+export async function persistLessonsOnly(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  lessons: LessonSlot[]
+): Promise<{ error: Error | null }> {
+  try {
+    const { data: existingLessons } = await supabase.from('lessons').select('id')
+    if (existingLessons?.length) {
+      const { error: delErr } = await supabase.from('lessons').delete().in('id', existingLessons.map((r: { id: string }) => r.id))
+      if (delErr) return { error: delErr as unknown as Error }
+    }
+    if (lessons.length > 0) {
+      const rows = lessons.map((l) => ({
+        id: l.id,
+        date: l.date,
+        start_time: l.startTime,
+        end_time: l.endTime,
+        room_name: l.roomName,
+        teacher_id: l.teacherId,
+        student_id: l.studentId ?? null,
+        accompanist_id: l.accompanistId ?? null,
+        status: l.status,
+        provisional_deadline: l.provisionalDeadline ?? null,
+        note: l.note ?? null,
+      }))
+      const { error } = await supabase.from('lessons').insert(rows)
+      if (error) return { error: error as unknown as Error }
+    }
+    return { error: null }
+  } catch (e) {
+    return { error: e instanceof Error ? e : new Error(String(e)) }
+  }
+}
+
+/** 伴奏者の「可能」枠だけを保存（anon 可。先生・生徒に反映するため） */
+export async function persistAccompanistAvailabilities(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  accompanistId: string,
+  slotIds: string[]
+): Promise<{ error: Error | null }> {
+  try {
+    const { error } = await supabase.rpc('set_accompanist_availabilities', {
+      p_accompanist_id: accompanistId,
+      p_slot_ids: slotIds,
+    })
+    if (error) return { error: error as unknown as Error }
+    return { error: null }
+  } catch (e) {
+    return { error: e instanceof Error ? e : new Error(String(e)) }
+  }
 }

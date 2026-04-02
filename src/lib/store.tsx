@@ -1,6 +1,6 @@
 'use client'
 
-import React, { createContext, useContext, useReducer, useEffect, ReactNode, useRef } from 'react'
+import React, { createContext, useContext, useReducer, useEffect, useCallback, ReactNode, useRef } from 'react'
 import {
   User, LessonSlot, DaySettings, AccompanistAvailability,
   LessonStatus, EndTimeMode, Student, Accompanist, WeeklyMaster
@@ -10,9 +10,12 @@ import { today, formatDateToYYYYMMDD } from '@/lib/schedule'
 import { createSupabaseClient } from '@/lib/supabase/client'
 import {
   getAppUserFromSession,
+  getAppUserByAuthUid,
   fetchAppUsers,
   fetchFullState,
   persistState,
+  persistLessonsOnly,
+  persistAccompanistAvailabilities,
   signOutSupabase,
   clearStaleSupabaseSession,
   isStaleAuthSessionError,
@@ -280,13 +283,36 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'MERGE_REMOTE_STATE': {
       const p = action.payload
+      let mergedLessons = p.lessons
+      const me = state.currentUser
+      if (p.lessons != null && me && (me.role === 'student' || me.role === 'accompanist')) {
+        const serverLessons = p.lessons
+        const myBookings = state.lessons.filter(
+          (l) => l.studentId === me.id || l.accompanistId === me.id
+        )
+        if (myBookings.length > 0) {
+          const serverIds = new Set(serverLessons.map((l) => l.id))
+          mergedLessons = [...serverLessons]
+          for (const local of myBookings) {
+            const idx = mergedLessons!.findIndex((m) => m.id === local.id)
+            if (idx < 0) {
+              mergedLessons!.push(local)
+            } else {
+              const onServer = mergedLessons![idx]
+              if (onServer.status === 'available' && (local.status === 'confirmed' || local.status === 'pending')) {
+                mergedLessons![idx] = local
+              }
+            }
+          }
+        }
+      }
       return {
         ...state,
         ...(p.users != null && { users: p.users }),
         ...(p.students != null && { students: p.students }),
         ...(p.accompanists != null && { accompanists: p.accompanists }),
         ...(p.daySettings != null && { daySettings: p.daySettings }),
-        ...(p.lessons != null && { lessons: p.lessons }),
+        ...(mergedLessons != null && { lessons: mergedLessons }),
         ...(p.weekly_masters != null && { weekly_masters: p.weekly_masters }),
         ...(p.accompanistAvailabilities != null && { accompanistAvailabilities: p.accompanistAvailabilities }),
       }
@@ -312,7 +338,12 @@ function reducer(state: AppState, action: Action): AppState {
     case 'DELETE_STUDENT': {
       const next = state.students.filter((s) => s.id !== action.payload)
       const users = state.users.filter((u) => u.id !== action.payload)
-      return { ...state, students: next, users }
+      const lessons = state.lessons.map((l) =>
+        l.studentId === action.payload
+          ? { ...l, status: 'available' as const, studentId: undefined, accompanistId: undefined, provisionalDeadline: undefined }
+          : l
+      )
+      return { ...state, students: next, users, lessons }
     }
     case 'ADD_ACCOMPANIST': {
       const next = [...state.accompanists, action.payload]
@@ -334,7 +365,15 @@ function reducer(state: AppState, action: Action): AppState {
     case 'DELETE_ACCOMPANIST': {
       const next = state.accompanists.filter((a) => a.id !== action.payload)
       const users = state.users.filter((u) => u.id !== action.payload)
-      return { ...state, accompanists: next, users }
+      const lessons = state.lessons.map((l) =>
+        l.accompanistId === action.payload
+          ? { ...l, status: 'available' as const, studentId: undefined, accompanistId: undefined, provisionalDeadline: undefined }
+          : l
+      )
+      const accompanistAvailabilities = state.accompanistAvailabilities.filter(
+        (a) => a.accompanistId !== action.payload
+      )
+      return { ...state, accompanists: next, users, lessons, accompanistAvailabilities }
     }
     case 'UPSERT_WEEKLY_MASTER': {
       const rest = state.weekly_masters.filter(
@@ -373,12 +412,13 @@ interface AppContextType {
   getLessonsForDate: (date: string) => LessonSlot[]
   getAvailabilitiesForSlot: (slotId: string) => AccompanistAvailability[]
   getAvailabilitiesForAccompanist: (accompanistId: string) => AccompanistAvailability[]
+  /** サーバーから最新の日設定・レッスン等を再取得（生徒・伴奏者向け） */
+  refreshFromServer: () => Promise<void>
 }
 
 const AppContext = createContext<AppContextType | null>(null)
 
 const STORAGE_KEY = 'lessonapp_state'
-
 /** 生徒・伴奏者が「名前だけで入った」ときの永続化キー（先生は使わない） */
 export const NAME_ONLY_USER_KEY = 'lessonapp_name_only_user'
 
@@ -445,7 +485,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const supabaseRef = useRef(createSupabaseClient())
 
-  // Supabase 利用時: セッション復元と名簿/データ取得（完了時に SESSION_RESTORE_DONE）
+  // Supabase 利用時: セッション復元と名簿/データ取得（エラー・ハング時も必ず SESSION_RESTORE_DONE する）
   useEffect(() => {
     const supabase = supabaseRef.current
     if (!supabase) {
@@ -459,22 +499,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
       hasRestoredRef.current = true
       dispatch({ type: 'SESSION_RESTORE_DONE' })
     }
+    const timeoutId = setTimeout(done, 5000)
+    const SESSION_LOCK_TIMEOUT_MS = 8000
     ;(async () => {
       try {
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+        await new Promise((r) => setTimeout(r, 400))
+        if (!mounted) return
+        const { error: sessionError } = await supabase.auth.getSession()
         if (sessionError && isStaleAuthSessionError(sessionError)) {
           await clearStaleSupabaseSession(supabase)
         }
         if (!mounted) return
-        if (session?.user) {
-          const appUser = await getAppUserFromSession(supabase)
-          if (appUser && mounted) {
-            dispatch({ type: 'LOGIN', payload: appUser })
-            skipPersistRef.current = true
-            const full = await fetchFullState(supabase)
-            if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
-          }
+        const appUser = await Promise.race([
+          getAppUserFromSession(supabase),
+          new Promise<User | null>((r) => setTimeout(() => r(null), SESSION_LOCK_TIMEOUT_MS)),
+        ]).catch(() => null)
+        if (!mounted) return
+        if (appUser) {
+          try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
+          dispatch({ type: 'LOGIN', payload: appUser })
+          skipPersistRef.current = true
+          const full = await fetchFullState(supabase)
+          if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
         } else {
+          try {
+            const raw = localStorage.getItem(NAME_ONLY_USER_KEY)
+            if (raw && mounted) {
+              const parsed = JSON.parse(raw) as { id: string; name: string; role: string }
+              if (parsed?.id && parsed?.name && (parsed.role === 'student' || parsed.role === 'accompanist')) {
+                const nameOnlyUser: User = { id: parsed.id, name: parsed.name, email: '', role: parsed.role as User['role'] }
+                dispatch({ type: 'LOGIN', payload: nameOnlyUser })
+                skipPersistRef.current = true
+                const full = await fetchFullState(supabase)
+                if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+                clearTimeout(timeoutId)
+                done()
+                return
+              }
+            }
+          } catch { /* ignore */ }
           const users = await fetchAppUsers(supabase)
           if (mounted && users.length) {
             const students = users.filter((u) => u.role === 'student').map((u) => ({ id: u.id, name: u.name }))
@@ -487,18 +550,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
           await clearStaleSupabaseSession(supabase)
         }
       } finally {
+        clearTimeout(timeoutId)
         done()
       }
     })()
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted || !supabase) return
       if (event === 'SIGNED_OUT') {
+        try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
         dispatch({ type: 'LOGOUT' })
         return
       }
       if (event === 'SIGNED_IN' && session?.user) {
         try {
-          const appUser = await getAppUserFromSession(supabase)
+          try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
+          const appUser = await getAppUserByAuthUid(supabase, session.user.id)
           if (appUser) {
             dispatch({ type: 'LOGIN', payload: appUser })
             skipPersistRef.current = true
@@ -541,7 +607,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch { /* ignore */ }
   }, [state])
 
-  // Supabase 利用時: 状態変更をデバウンスして保存
+  // ログアウト時に名前のみユーザーを localStorage から削除
+  useEffect(() => {
+    if (state.currentUser === null) {
+      try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
+    }
+  }, [state.currentUser])
+
+  // Supabase 利用時: 状態変更をデバウンスして保存（先生のみ・セッションがあるときだけ）
   useEffect(() => {
     const supabase = supabaseRef.current
     if (!supabase || !state.currentUser || !hasRestoredRef.current) return
@@ -550,14 +623,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return
     }
     if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current)
+    const isNameOnly = state.currentUser?.role === 'student' || state.currentUser?.role === 'accompanist'
+    const delayMs = isNameOnly ? 400 : 1500
     persistTimeoutRef.current = setTimeout(async () => {
       persistTimeoutRef.current = null
-      await persistState(supabase, state)
-    }, 1500)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        await persistState(supabase, state)
+      } else if (state.currentUser) {
+        await persistLessonsOnly(supabase, state.lessons)
+      }
+    }, delayMs)
     return () => {
       if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current)
     }
   }, [state])
+
+  // 伴奏者が「可能」枠を変更したときに DB に保存（先生・生徒に反映するため）
+  const accompanistAvailTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const supabase = supabaseRef.current
+    if (!supabase || state.currentUser?.role !== 'accompanist' || !hasRestoredRef.current) return
+    const accompanistId = state.currentUser.id
+    if (accompanistAvailTimeoutRef.current) clearTimeout(accompanistAvailTimeoutRef.current)
+    accompanistAvailTimeoutRef.current = setTimeout(async () => {
+      accompanistAvailTimeoutRef.current = null
+      const slotIds = state.accompanistAvailabilities
+        .filter((a) => a.accompanistId === accompanistId)
+        .map((a) => a.slotId)
+      await persistAccompanistAvailabilities(supabase, accompanistId, slotIds)
+    }, 1500)
+    return () => {
+      if (accompanistAvailTimeoutRef.current) clearTimeout(accompanistAvailTimeoutRef.current)
+    }
+  }, [state.currentUser?.id, state.accompanistAvailabilities])
 
   // 定期的に期限切れをチェック（1分ごと）
   useEffect(() => {
@@ -569,6 +668,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const getUserById = (id?: string) => state.users.find((u) => u.id === id)
+
+  const refreshFromServer = useCallback(async () => {
+    const supabase = supabaseRef.current
+    if (!supabase) return
+    const full = await fetchFullState(supabase)
+    if (full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+  }, [])
+
+  // 生徒・伴奏者は定期的にサーバーから再取得（先生の設定・レッスン反映のため）
+  useEffect(() => {
+    const isNameOnly = state.currentUser && (state.currentUser.role === 'student' || state.currentUser.role === 'accompanist')
+    if (!isNameOnly) return
+    const intervalMs = 2 * 60 * 1000
+    const id = setInterval(refreshFromServer, intervalMs)
+    return () => clearInterval(id)
+  }, [state.currentUser?.id, state.currentUser?.role, refreshFromServer])
 
   const getDaySettings = (date: string): DaySettings => {
     return (
@@ -596,6 +711,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         getLessonsForDate,
         getAvailabilitiesForSlot,
         getAvailabilitiesForAccompanist,
+        refreshFromServer,
       }}
     >
       {children}

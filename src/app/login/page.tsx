@@ -1,14 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Music } from 'lucide-react'
 import { useApp } from '@/lib/store'
-import { validateLogin, isEmailConfirmed } from '@/lib/auth'
 import Button from '@/components/ui/Button'
 import { createSupabaseClient } from '@/lib/supabase/client'
-import { signInWithSupabase } from '@/lib/supabase/sync'
+import { getAppUserFromSession, signInWithSupabase } from '@/lib/supabase/sync'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -19,10 +18,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [nameOnlyUserId, setNameOnlyUserId] = useState('')
 
-  const students = state.users.filter((u) => u.role === 'student')
-  const studentsWithConfirmed = students.filter((s) => isEmailConfirmed(s.id))
+  // すでにログイン済み（セッションあり）ならメール・パスワードを聞かずカレンダーへ
+  useEffect(() => {
+    if (state.currentUser) {
+      router.push('/calendar')
+      return
+    }
+    if (!supabase) return
+    getAppUserFromSession(supabase).then((user) => {
+      if (user) {
+        dispatch({ type: 'LOGIN', payload: user })
+        router.push('/calendar')
+      }
+    })
+  }, [state.currentUser, supabase, dispatch, router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -33,57 +43,25 @@ export default function LoginPage() {
       return
     }
 
+    if (!supabase) {
+      setError('ログイン機能は利用できません。')
+      return
+    }
+
     setLoading(true)
     try {
-      if (supabase) {
-        const { user: appUser, error: signInError } = await signInWithSupabase(supabase, emailTrim, password)
-        if (signInError) {
-          setError(signInError.message || 'メールアドレスまたはパスワードが正しくありません')
-          setLoading(false)
-          return
-        }
-        if (appUser) dispatch({ type: 'LOGIN', payload: appUser })
-        router.push('/calendar')
-        return
-      }
-      const userId = await validateLogin(emailTrim, password)
-      if (!userId) {
-        setError('メールアドレスまたはパスワードが正しくありません')
+      const { user: appUser, error: signInError } = await signInWithSupabase(supabase, emailTrim, password)
+      if (signInError) {
+        setError(signInError.message || 'メールアドレスまたはパスワードが正しくありません')
         setLoading(false)
         return
       }
-      const user = state.users.find((u) => u.id === userId)
-      if (!user) {
-        setError('このアカウントは名簿に登録されていません。先生にお問い合わせください。')
-        setLoading(false)
-        return
-      }
-      dispatch({ type: 'LOGIN', payload: user })
+      if (appUser) dispatch({ type: 'LOGIN', payload: appUser })
       router.push('/calendar')
     } catch {
-      setError('ログインに失敗しました。もう一度お試しください。')
+      setError('ログインに失敗しました。')
       setLoading(false)
     }
-  }
-
-  const handleNameOnlyLogin = (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    if (!nameOnlyUserId) {
-      setError('名前を選択してください')
-      return
-    }
-    const user = state.users.find((u) => u.id === nameOnlyUserId)
-    if (!user || user.role !== 'student') {
-      setError('選択したアカウントでログインできません')
-      return
-    }
-    if (!isEmailConfirmed(nameOnlyUserId)) {
-      setError('このアカウントはまだメールアドレス確認が済んでいません。はじめにメール・パスワードでログインしてください。')
-      return
-    }
-    dispatch({ type: 'LOGIN', payload: user })
-    router.push('/calendar')
   }
 
   return (
@@ -93,32 +71,9 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-2xl shadow-lg mb-4">
             <Music size={32} className="text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">レッスンスケジューラー</h1>
-          <p className="text-sm text-gray-500 mt-1">先生が登録した方のみログインできます</p>
+          <h1 className="text-2xl font-bold text-gray-900">ログイン</h1>
+          <p className="text-sm text-gray-500 mt-1">登録したメールとパスワードを入力してください（別の端末から入るときなど）</p>
         </div>
-
-        {/* 生徒：名前選択だけでログイン（Supabase 未使用時のみ・アドレス確認済み） */}
-        {!supabase && studentsWithConfirmed.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-4">
-            <h2 className="text-base font-semibold text-gray-900 mb-1">生徒の方は名前でログイン</h2>
-            <p className="text-xs text-gray-500 mb-4">メールアドレス確認済みの方は名前を選ぶだけで入れます</p>
-            <form onSubmit={handleNameOnlyLogin} className="space-y-3">
-              <select
-                value={nameOnlyUserId}
-                onChange={(e) => { setNameOnlyUserId(e.target.value); setError('') }}
-                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
-              >
-                <option value="">名前を選択</option>
-                {studentsWithConfirmed.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
-              <Button type="submit" className="w-full">
-                名前でログイン
-              </Button>
-            </form>
-          </div>
-        )}
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           {currentUser?.role === 'student' && (
@@ -163,9 +118,9 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center mt-4">
-          <Link href="/register" className="text-sm text-indigo-600 hover:underline">
-            名前を選択して入る / 登録
-          </Link>
+          <Link href="/enter" className="text-sm text-gray-500 hover:underline">名前を選択して入る</Link>
+          <span className="mx-2">|</span>
+          <Link href="/register" className="text-sm text-indigo-600 hover:underline">新規登録</Link>
         </p>
       </div>
     </div>

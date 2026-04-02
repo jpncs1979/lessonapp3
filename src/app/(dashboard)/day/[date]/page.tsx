@@ -19,7 +19,7 @@ function formatDayTitle(dateStr: string): string {
 
 export default function DayPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = use(params)
-  const { state, dispatch, getDaySettings, getLessonsForDate, getUserById } = useApp()
+  const { state, dispatch, getDaySettings, getLessonsForDate } = useApp()
   const { currentUser, lessons, users } = state
   const settings = getDaySettings(date)
   const isTeacher = currentUser?.role === 'teacher'
@@ -30,13 +30,6 @@ export default function DayPage({ params }: { params: Promise<{ date: string }> 
     : `レッスンスケジュール（${formatDayTitle(date)}）`
 
   const lessonsForDate = getLessonsForDate(date)
-  const confirmedOrPending = lessonsForDate.filter((l) => l.status === 'confirmed' || l.status === 'pending')
-  const todayCountByStudent = confirmedOrPending.reduce<Record<string, number>>((acc, l) => {
-    if (l.studentId) {
-      acc[l.studentId] = (acc[l.studentId] ?? 0) + 1
-    }
-    return acc
-  }, {})
 
   const handleGenerateSlots = () => {
     const newSettings = { ...settings, isLessonDay: true }
@@ -64,18 +57,8 @@ export default function DayPage({ params }: { params: Promise<{ date: string }> 
   }
 
   return (
-    <div>
-      <h1 className="text-xl font-bold text-gray-900 mb-1">{scheduleTitle}</h1>
-
-      {/* 先生用: 本日の誰が何回 */}
-      {isTeacher && settings.isLessonDay && Object.keys(todayCountByStudent).length > 0 && (
-        <div className="mb-3 px-3 py-2 bg-white rounded-lg border border-gray-100 text-sm text-gray-700">
-          <span className="font-medium text-gray-500">本日の受講：</span>
-          {Object.entries(todayCountByStudent)
-            .map(([id, n]) => `${getUserById(id)?.name ?? ''} ${n}回`)
-            .join('、')}
-        </div>
-      )}
+    <div className="w-full min-w-0 max-w-full overflow-x-hidden min-h-[50dvh]">
+      <h1 className="text-base sm:text-xl font-bold text-gray-900 mb-1 truncate">{scheduleTitle}</h1>
 
       {/* 先生用: この日がレッスン日でないとき「枠を生成」 */}
       {isTeacher && !settings.isLessonDay && (
@@ -111,7 +94,9 @@ export default function DayPage({ params }: { params: Promise<{ date: string }> 
         </div>
       )}
 
-      <DayTimetable date={date} />
+      <div className="min-w-0 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+        <DayTimetable date={date} />
+      </div>
     </div>
   )
 }

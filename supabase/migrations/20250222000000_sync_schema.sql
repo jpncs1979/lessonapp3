@@ -75,19 +75,27 @@ ALTER TABLE weekly_masters ENABLE ROW LEVEL SECURITY;
 ALTER TABLE accompanist_availabilities ENABLE ROW LEVEL SECURITY;
 
 -- 名簿は未ログインでも読める（名前選択画面用）
+DROP POLICY IF EXISTS "app_users_select_anon" ON app_users;
 CREATE POLICY "app_users_select_anon" ON app_users FOR SELECT USING (true);
+DROP POLICY IF EXISTS "app_users_all_authenticated" ON app_users;
 CREATE POLICY "app_users_all_authenticated" ON app_users FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- 自分の auth_profiles のみ
+DROP POLICY IF EXISTS "auth_profiles_insert_own" ON auth_profiles;
 CREATE POLICY "auth_profiles_insert_own" ON auth_profiles FOR INSERT TO authenticated
   WITH CHECK (auth.uid() = auth_uid);
+DROP POLICY IF EXISTS "auth_profiles_select_own" ON auth_profiles;
 CREATE POLICY "auth_profiles_select_own" ON auth_profiles FOR SELECT TO authenticated
   USING (auth.uid() = auth_uid);
 
 -- 日設定・レッスン・週間マスター・可能枠はログイン済みなら読み書き可
+DROP POLICY IF EXISTS "day_settings_policy" ON day_settings;
 CREATE POLICY "day_settings_policy" ON day_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "lessons_policy" ON lessons;
 CREATE POLICY "lessons_policy" ON lessons FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "weekly_masters_policy" ON weekly_masters;
 CREATE POLICY "weekly_masters_policy" ON weekly_masters FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "accompanist_availabilities_policy" ON accompanist_availabilities;
 CREATE POLICY "accompanist_availabilities_policy" ON accompanist_availabilities FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- 初期名簿（1先生・複数生徒・複数伴奏者）※既に存在する場合はスキップ
