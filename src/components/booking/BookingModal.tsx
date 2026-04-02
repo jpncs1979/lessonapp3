@@ -1,13 +1,15 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Clock, User, Music, AlertCircle, Check } from 'lucide-react'
+import { Clock, User, Music, Check } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import { useApp } from '@/lib/store'
 import { generateTimeItems } from '@/lib/schedule'
 import { LessonSlot, AccompanistAvailability, TimeItem } from '@/types'
-import { cn, getInitials, formatDeadline, isExpired, calcProvisionalDeadline, generateId } from '@/lib/utils'
+import { cn, getInitials, generateId } from '@/lib/utils'
+import { createSupabaseClient } from '@/lib/supabase/client'
+import { insertActivityLog } from '@/lib/supabase/sync'
 
 interface BookingModalProps {
   open: boolean
@@ -61,9 +63,6 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
 
   const student = getUserById(slot.studentId)
   const accompanist = getUserById(slot.accompanistId)
-  const settings = state.daySettings.find((s) => s.date === slot.date)
-  const provisionalHours = settings?.provisionalHours || 24
-
   const handleBook = () => {
     if (!isStudent || !currentUser) return
     const otherOnSameDay = lessonsForDate.some(
@@ -81,8 +80,7 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
         id: slot.id,
         studentId: currentUser.id,
         accompanistId: acc || undefined,
-        status: 'pending',
-        provisionalDeadline: calcProvisionalDeadline(provisionalHours),
+        status: 'confirmed',
       },
     })
 
@@ -90,12 +88,19 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
       dispatch({ type: 'CONFIRM_ACCOMPANIED', payload: { slotId: slot.id } })
     }
 
+    insertActivityLog(createSupabaseClient(), {
+      actorId: currentUser.id,
+      actorName: currentUser.name,
+      action: 'lesson_booked',
+      lessonId: slot.id,
+      lessonDate: slot.date,
+      lessonStartTime: slot.startTime,
+      details: {
+        studentName: currentUser.name,
+        accompanistName: acc ? getUserById(acc)?.name : undefined,
+      },
+    })
     setSubmitted(true)
-  }
-
-  const handleApprove = () => {
-    dispatch({ type: 'APPROVE_LESSON', payload: slot.id })
-    onClose()
   }
 
   const handleCancel = () => {
@@ -109,11 +114,23 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
         provisionalDeadline: undefined,
       },
     })
+    // 先生の「枠をブロック」はログに残さない。生徒・伴奏者によるキャンセルのみログ
+    if (currentUser && currentUser.role !== 'teacher') {
+      insertActivityLog(createSupabaseClient(), {
+        actorId: currentUser.id,
+        actorName: currentUser.name,
+        action: 'lesson_cancelled',
+        lessonId: slot.id,
+        lessonDate: slot.date,
+        lessonStartTime: slot.startTime,
+        details: student ? { studentName: student.name } : undefined,
+      })
+    }
     onClose()
   }
 
   const handleTeacherAssign = () => {
-    if (!assignStudentId) return
+    if (!assignStudentId || !currentUser) return
     const otherOnSameDay = lessonsForDate.some(
       (l) => l.id !== slot.id && (l.status === 'confirmed' || l.status === 'pending') && l.studentId === assignStudentId
     )
@@ -135,6 +152,18 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
     if (assignAccompanistId) {
       dispatch({ type: 'CONFIRM_ACCOMPANIED', payload: { slotId: slot.id } })
     }
+    insertActivityLog(createSupabaseClient(), {
+      actorId: currentUser.id,
+      actorName: currentUser.name,
+      action: 'lesson_assigned',
+      lessonId: slot.id,
+      lessonDate: slot.date,
+      lessonStartTime: slot.startTime,
+      details: {
+        studentName: getUserById(assignStudentId)?.name,
+        accompanistName: assignAccompanistId ? getUserById(assignAccompanistId)?.name : undefined,
+      },
+    })
     setAssignStudentId('')
     setAssignAccompanistId('')
     onClose()
@@ -142,33 +171,44 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
 
   // 伴奏者の「可」表明トグル
   const handleToggleAvailability = () => {
-    if (!isAccompanist) return
+    if (!isAccompanist || !currentUser) return
     const existing = availabilities.find((a) => a.accompanistId === currentUser.id)
     if (existing) {
       dispatch({ type: 'REMOVE_AVAILABILITY', payload: { slotId: slot.id, accompanistId: currentUser.id } })
+      insertActivityLog(createSupabaseClient(), {
+        actorId: currentUser.id,
+        actorName: currentUser.name,
+        action: 'availability_removed',
+        lessonId: slot.id,
+        lessonDate: slot.date,
+        lessonStartTime: slot.startTime,
+      })
     } else {
       dispatch({
         type: 'ADD_AVAILABILITY',
         payload: { id: generateId(), slotId: slot.id, accompanistId: currentUser.id, createdAt: new Date().toISOString() },
       })
+      insertActivityLog(createSupabaseClient(), {
+        actorId: currentUser.id,
+        actorName: currentUser.name,
+        action: 'availability_added',
+        lessonId: slot.id,
+        lessonDate: slot.date,
+        lessonStartTime: slot.startTime,
+      })
     }
   }
 
   const myAvailability = availabilities.find((a) => a.accompanistId === currentUser.id)
-  const expired = isExpired(slot.provisionalDeadline)
 
   if (submitted) {
     return (
-      <Modal open={open} onClose={() => { onClose(); setSubmitted(false) }} title="予約申請完了">
+      <Modal open={open} onClose={() => { onClose(); setSubmitted(false) }} title="予約完了">
         <div className="text-center py-4">
           <div className="w-14 h-14 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-3">
             <Check size={28} className="text-emerald-600" />
           </div>
-          <p className="font-semibold text-gray-900 mb-1">予約申請が完了しました</p>
-          <p className="text-sm text-gray-500 mb-4">先生の承認をお待ちください</p>
-          <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
-            仮押さえ期限：{formatDeadline(calcProvisionalDeadline(provisionalHours))}
-          </p>
+          <p className="font-semibold text-gray-900 mb-1">予約が完了しました</p>
           <Button className="mt-5 w-full" onClick={() => { onClose(); setSubmitted(false) }}>
             閉じる
           </Button>
@@ -224,32 +264,13 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
               </div>
             </div>
           )}
-          {slot.status === 'pending' && slot.provisionalDeadline && (
-            <div className={cn(
-              'flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg',
-              expired ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'
-            )}>
-              <AlertCircle size={13} />
-              {expired ? '期限切れ（自動解放されます）' : `仮押さえ期限：${formatDeadline(slot.provisionalDeadline)}`}
-            </div>
-          )}
         </div>
       )}
 
       {/* ── 先生のアクション ── */}
       {isTeacher && (
         <div className="space-y-2">
-          {slot.status === 'pending' && (
-            <>
-              <Button variant="success" className="w-full" onClick={handleApprove}>
-                <Check size={16} className="mr-1.5" /> 承認する
-              </Button>
-              <Button variant="danger" className="w-full" onClick={handleCancel}>
-                キャンセル・枠を解放
-              </Button>
-            </>
-          )}
-          {slot.status === 'confirmed' && (
+          {(slot.status === 'confirmed' || slot.status === 'pending') && (
             <>
               <div className="mb-4 p-3 bg-indigo-50 rounded-xl">
                 <p className="text-xs font-medium text-indigo-600 mb-2">生徒・伴奏者を変更</p>
@@ -289,8 +310,8 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
                   </Button>
                 </div>
               </div>
-              <Button variant="danger" className="w-full" onClick={handleCancel}>
-                予約をキャンセル
+              <Button variant="secondary" className="w-full" onClick={handleCancel}>
+                枠をブロック
               </Button>
             </>
           )}
@@ -427,7 +448,7 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
         </div>
       )}
 
-      {isStudent && slot.status === 'pending' && slot.studentId === currentUser.id && (
+      {isStudent && (slot.status === 'pending' || slot.status === 'confirmed') && slot.studentId === currentUser.id && (
         <Button variant="danger" className="w-full" onClick={handleCancel}>
           予約をキャンセル
         </Button>

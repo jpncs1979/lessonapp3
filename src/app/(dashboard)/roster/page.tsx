@@ -27,7 +27,7 @@ export default function RosterPage() {
     )
   }
 
-  const handleAddStudent = () => {
+  const handleSaveNewStudent = () => {
     const name = newStudentName.trim()
     if (!name) return
     dispatch({
@@ -101,18 +101,21 @@ export default function RosterPage() {
         <h2 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-1.5">
           <UserPlus size={16} /> 学生名簿
         </h2>
-        <div className="flex gap-2 mb-4">
-          <input
-            type="text"
-            value={newStudentName}
-            onChange={(e) => setNewStudentName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleAddStudent()}
-            placeholder="氏名を入力"
-            className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
-          />
-          <Button onClick={handleAddStudent} disabled={!newStudentName.trim()}>
-            学生を追加
-          </Button>
+        <div className="flex flex-col gap-2 mb-4">
+          <p className="text-xs text-gray-500">氏名を入力し、保存で名簿に登録します。</p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newStudentName}
+              onChange={(e) => setNewStudentName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSaveNewStudent()}
+              placeholder="氏名を入力"
+              className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+            <Button onClick={handleSaveNewStudent} disabled={!newStudentName.trim()}>
+              保存
+            </Button>
+          </div>
         </div>
         <ul className="space-y-2">
           {students.map((s) => (
@@ -144,7 +147,7 @@ export default function RosterPage() {
           ))}
         </ul>
         {students.length === 0 && (
-          <p className="text-sm text-gray-400 py-2">学生がいません。「学生を追加」で追加してください。</p>
+          <p className="text-sm text-gray-400 py-2">学生がいません。上のフォームで氏名を入力して保存してください。</p>
         )}
       </section>
 

@@ -143,27 +143,6 @@ export default function SettingsPage() {
               </button>
             </div>
 
-            {/* 仮押さえ時間 */}
-            <div>
-              <p className="text-sm font-medium text-gray-900 mb-2">仮押さえ期限</p>
-              <div className="grid grid-cols-2 gap-2">
-                {([24, 48] as (24 | 48)[]).map((hours) => (
-                  <button
-                    key={hours}
-                    onClick={() => updateSettings({ provisionalHours: hours })}
-                    className={cn(
-                      'py-2.5 rounded-xl border-2 text-sm font-medium transition-colors',
-                      settings.provisionalHours === hours
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                        : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                    )}
-                  >
-                    {hours}時間
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {/* 教室名 */}
             <div>
               <p className="text-sm font-medium text-gray-900 mb-2">デフォルト教室</p>

@@ -13,6 +13,7 @@ import { signInWithSupabase } from '@/lib/supabase/sync'
 export default function LoginPage() {
   const router = useRouter()
   const { state, dispatch } = useApp()
+  const { currentUser } = state
   const supabase = createSupabaseClient()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -120,6 +121,11 @@ export default function LoginPage() {
         )}
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+          {currentUser?.role === 'student' && (
+            <p className="text-sm text-indigo-700 bg-indigo-50 rounded-xl px-4 py-2.5 mb-4">
+              <span className="font-medium">{currentUser.name}</span> さんとして本人確認（メール・パスワードでログイン）
+            </p>
+          )}
           <h2 className="text-base font-semibold text-gray-900 mb-4">メール・パスワードでログイン</h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">

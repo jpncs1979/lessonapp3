@@ -1,13 +1,15 @@
 'use client'
 
 import { useState } from 'react'
-import { Clock, User, Music, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Clock, User, Music, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useApp } from '@/lib/store'
 import { generateTimeItems, formatDate, formatDateToYYYYMMDD } from '@/lib/schedule'
 import { TimeItem, LessonSlot } from '@/types'
-import { cn, getInitials, formatDeadline, calcProvisionalDeadline, generateId } from '@/lib/utils'
+import { cn, getInitials, generateId } from '@/lib/utils'
 import BookingModal from '@/components/booking/BookingModal'
+import { createSupabaseClient } from '@/lib/supabase/client'
+import { insertActivityLog } from '@/lib/supabase/sync'
 
 interface DayTimetableProps {
   date: string
@@ -19,6 +21,7 @@ export default function DayTimetable({ date }: DayTimetableProps) {
   const { currentUser, lessons } = state
   const [selectedSlot, setSelectedSlot] = useState<LessonSlot | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  const [sameDayMessage, setSameDayMessage] = useState<string | null>(null)
 
   const settings = getDaySettings(date)
   const lessonsForDate = getLessonsForDate(date)
@@ -42,6 +45,7 @@ export default function DayTimetable({ date }: DayTimetableProps) {
 
   const handleSlotClick = (slot: LessonSlot) => {
     if (slot.status === 'break' || slot.status === 'lunch') return
+    const supabase = createSupabaseClient()
     // 先生: 不可枠は1タップでレッスン可に。空き枠・確定枠はモーダルで生徒・伴奏者を指定／変更
     if (isTeacher) {
       if (slot.status === 'blocked') {
@@ -65,20 +69,54 @@ export default function DayTimetable({ date }: DayTimetableProps) {
       if (slot.status === 'available') {
         if (myAv) {
           dispatch({ type: 'REMOVE_AVAILABILITY', payload: { slotId: slot.id, accompanistId: currentUser.id } })
+          insertActivityLog(supabase, {
+            actorId: currentUser.id,
+            actorName: currentUser.name,
+            action: 'availability_removed',
+            lessonId: slot.id,
+            lessonDate: slot.date,
+            lessonStartTime: slot.startTime,
+          })
         } else {
           dispatch({
             type: 'ADD_AVAILABILITY',
             payload: { id: generateId(), slotId: slot.id, accompanistId: currentUser.id, createdAt: new Date().toISOString() },
+          })
+          insertActivityLog(supabase, {
+            actorId: currentUser.id,
+            actorName: currentUser.name,
+            action: 'availability_added',
+            lessonId: slot.id,
+            lessonDate: slot.date,
+            lessonStartTime: slot.startTime,
           })
         }
         return
       }
       if (slot.status === 'confirmed' && slot.studentId && !slot.accompanistId) {
         dispatch({ type: 'UPDATE_LESSON', payload: { id: slot.id, accompanistId: currentUser.id } })
+        insertActivityLog(supabase, {
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: 'accompanist_added',
+          lessonId: slot.id,
+          lessonDate: slot.date,
+          lessonStartTime: slot.startTime,
+          details: { studentName: getUserById(slot.studentId)?.name },
+        })
         return
       }
       if (slot.status === 'confirmed' && slot.accompanistId === currentUser.id) {
         dispatch({ type: 'UPDATE_LESSON', payload: { id: slot.id, accompanistId: undefined } })
+        insertActivityLog(supabase, {
+          actorId: currentUser.id,
+          actorName: currentUser.name,
+          action: 'accompanist_removed',
+          lessonId: slot.id,
+          lessonDate: slot.date,
+          lessonStartTime: slot.startTime,
+          details: { studentName: getUserById(slot.studentId)?.name },
+        })
         return
       }
     }
@@ -91,22 +129,43 @@ export default function DayTimetable({ date }: DayTimetableProps) {
 
   const handleBookForStudent = (slot: LessonSlot, accompanistId?: string) => {
     if (!currentUser || currentUser.role !== 'student') return
+    const otherOnSameDay = lessonsForDate.some(
+      (l) => l.id !== slot.id && (l.status === 'confirmed' || l.status === 'pending') && l.studentId === currentUser.id
+    )
+    if (otherOnSameDay) {
+      setSameDayMessage('同じ日には1回までです。')
+      setTimeout(() => setSameDayMessage(null), 3000)
+      return
+    }
+    setSameDayMessage(null)
     dispatch({
       type: 'UPDATE_LESSON',
       payload: {
         id: slot.id,
         studentId: currentUser.id,
         accompanistId,
-        status: 'pending',
-        provisionalDeadline: calcProvisionalDeadline(settings.provisionalHours ?? 24),
+        status: 'confirmed',
       },
     })
     if (accompanistId) {
       dispatch({ type: 'CONFIRM_ACCOMPANIED', payload: { slotId: slot.id } })
     }
+    insertActivityLog(createSupabaseClient(), {
+      actorId: currentUser.id,
+      actorName: currentUser.name,
+      action: 'lesson_booked',
+      lessonId: slot.id,
+      lessonDate: slot.date,
+      lessonStartTime: slot.startTime,
+      details: {
+        studentName: currentUser.name,
+        accompanistName: accompanistId ? getUserById(accompanistId)?.name : undefined,
+      },
+    })
   }
 
   const handleCancelForStudent = (slot: LessonSlot) => {
+    const studentName = getUserById(slot.studentId)?.name
     dispatch({
       type: 'UPDATE_LESSON',
       payload: {
@@ -117,6 +176,17 @@ export default function DayTimetable({ date }: DayTimetableProps) {
         provisionalDeadline: undefined,
       },
     })
+    if (currentUser) {
+      insertActivityLog(createSupabaseClient(), {
+        actorId: currentUser.id,
+        actorName: currentUser.name,
+        action: 'lesson_cancelled',
+        lessonId: slot.id,
+        lessonDate: slot.date,
+        lessonStartTime: slot.startTime,
+        details: studentName ? { studentName } : undefined,
+      })
+    }
   }
 
   const totalSlots = items.filter((i) => i.type === 'slot').length
@@ -171,6 +241,12 @@ export default function DayTimetable({ date }: DayTimetableProps) {
             ))}
           </div>
         </div>
+      )}
+
+      {sameDayMessage && (
+        <p className="mb-3 text-sm text-amber-700 bg-amber-50 px-4 py-2 rounded-xl">
+          {sameDayMessage}
+        </p>
       )}
 
       {/* タイムライン */}
@@ -339,12 +415,6 @@ function TimeSlotRow({
               <p className="text-sm text-teal-700 mt-0.5 flex items-center gap-1">
                 <Music size={12} />
                 伴奏付き：{accompanist.name}
-              </p>
-            )}
-            {slot.status === 'pending' && slot.provisionalDeadline && (
-              <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                <AlertCircle size={11} />
-                {formatDeadline(slot.provisionalDeadline)}
               </p>
             )}
           </div>

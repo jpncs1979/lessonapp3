@@ -158,9 +158,6 @@ function BoardCard({
             <div className="flex items-center gap-2 mb-2">
               <Clock size={13} className="text-gray-400" />
               <span className="text-sm font-semibold text-gray-900">{slot.startTime} 〜 {slot.endTime}</span>
-              {slot.status === 'pending' && (
-                <span className="text-xs bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full">承認待ち</span>
-              )}
             </div>
 
             {/* 生徒 */}

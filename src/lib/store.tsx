@@ -14,6 +14,8 @@ import {
   fetchFullState,
   persistState,
   signOutSupabase,
+  clearStaleSupabaseSession,
+  isStaleAuthSessionError,
 } from '@/lib/supabase/sync'
 
 // ─── デモ用初期データ ───────────────────────────────────────────────
@@ -148,6 +150,7 @@ function generateDemoSlots(settings: DaySettings[], today: string): LessonSlot[]
 
 export interface AppState {
   currentUser: User | null
+  sessionRestoreDone: boolean
   users: User[]
   students: Student[]
   accompanists: Accompanist[]
@@ -166,7 +169,6 @@ type Action =
   | { type: 'UPSERT_DAY_SETTINGS'; payload: DaySettings }
   | { type: 'ADD_AVAILABILITY'; payload: AccompanistAvailability }
   | { type: 'REMOVE_AVAILABILITY'; payload: { slotId: string; accompanistId: string } }
-  | { type: 'APPROVE_LESSON'; payload: string }
   | { type: 'CONFIRM_ACCOMPANIED'; payload: { slotId: string } }
   | { type: 'EXPIRE_PROVISIONAL' }
   | { type: 'LOAD_STATE'; payload: AppState }
@@ -181,6 +183,7 @@ type Action =
   | { type: 'REMOVE_WEEKLY_MASTER'; payload: { day_of_week: number; slot_index: number } }
   | { type: 'REPLACE_WEEKLY_MASTERS'; payload: WeeklyMaster[] }
   | { type: 'UPDATE_USER_EMAIL'; payload: { id: string; email: string } }
+  | { type: 'SESSION_RESTORE_DONE' }
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -188,6 +191,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, currentUser: action.payload }
     case 'LOGOUT':
       return { ...state, currentUser: null }
+    case 'SESSION_RESTORE_DONE':
+      return { ...state, sessionRestoreDone: true }
 
     case 'ADD_LESSON':
       return { ...state, lessons: [...state.lessons, action.payload] }
@@ -223,15 +228,6 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         accompanistAvailabilities: state.accompanistAvailabilities.filter(
           (a) => !(a.slotId === action.payload.slotId && a.accompanistId === action.payload.accompanistId)
-        ),
-      }
-
-    // 先生が承認
-    case 'APPROVE_LESSON':
-      return {
-        ...state,
-        lessons: state.lessons.map((l) =>
-          l.id === action.payload ? { ...l, status: 'confirmed' } : l
         ),
       }
 
@@ -280,7 +276,7 @@ function reducer(state: AppState, action: Action): AppState {
       }
 
     case 'LOAD_STATE':
-      return action.payload
+      return { ...action.payload, sessionRestoreDone: (action.payload as AppState).sessionRestoreDone ?? state.sessionRestoreDone }
 
     case 'MERGE_REMOTE_STATE': {
       const p = action.payload
@@ -383,6 +379,9 @@ const AppContext = createContext<AppContextType | null>(null)
 
 const STORAGE_KEY = 'lessonapp_state'
 
+/** 生徒・伴奏者が「名前だけで入った」ときの永続化キー（先生は使わない） */
+export const NAME_ONLY_USER_KEY = 'lessonapp_name_only_user'
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const todayStr = today()
   const demoSettings = generateDemoSettings(todayStr)
@@ -392,6 +391,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const initialAccompanists = makeInitialAccompanists()
   const initialState: AppState = {
     currentUser: null,
+    sessionRestoreDone: false,
     users: studentsAndAccompanistsToUsers(initialStudents, initialAccompanists),
     students: initialStudents,
     accompanists: initialAccompanists,
@@ -445,34 +445,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const supabaseRef = useRef(createSupabaseClient())
 
-  // Supabase 利用時: セッション復元と名簿/データ取得
+  // Supabase 利用時: セッション復元と名簿/データ取得（完了時に SESSION_RESTORE_DONE）
   useEffect(() => {
     const supabase = supabaseRef.current
     if (!supabase) {
       hasRestoredRef.current = true
+      dispatch({ type: 'SESSION_RESTORE_DONE' })
       return
     }
     let mounted = true
-    ;(async () => {
-      const { data: { session } } = await supabase.auth.getSession()
+    const done = () => {
       if (!mounted) return
-      if (session?.user) {
-        const appUser = await getAppUserFromSession(supabase)
-        if (appUser && mounted) {
-          dispatch({ type: 'LOGIN', payload: appUser })
-          skipPersistRef.current = true
-          const full = await fetchFullState(supabase)
-          if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
-        }
-      } else {
-        const users = await fetchAppUsers(supabase)
-        if (mounted && users.length) {
-          const students = users.filter((u) => u.role === 'student').map((u) => ({ id: u.id, name: u.name }))
-          const accompanists = users.filter((u) => u.role === 'accompanist').map((u) => ({ id: u.id, name: u.name }))
-          dispatch({ type: 'MERGE_REMOTE_STATE', payload: { users, students, accompanists } })
-        }
-      }
       hasRestoredRef.current = true
+      dispatch({ type: 'SESSION_RESTORE_DONE' })
+    }
+    ;(async () => {
+      try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+        if (sessionError && isStaleAuthSessionError(sessionError)) {
+          await clearStaleSupabaseSession(supabase)
+        }
+        if (!mounted) return
+        if (session?.user) {
+          const appUser = await getAppUserFromSession(supabase)
+          if (appUser && mounted) {
+            dispatch({ type: 'LOGIN', payload: appUser })
+            skipPersistRef.current = true
+            const full = await fetchFullState(supabase)
+            if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+          }
+        } else {
+          const users = await fetchAppUsers(supabase)
+          if (mounted && users.length) {
+            const students = users.filter((u) => u.role === 'student').map((u) => ({ id: u.id, name: u.name }))
+            const accompanists = users.filter((u) => u.role === 'accompanist').map((u) => ({ id: u.id, name: u.name }))
+            dispatch({ type: 'MERGE_REMOTE_STATE', payload: { users, students, accompanists } })
+          }
+        }
+      } catch (e) {
+        if (isStaleAuthSessionError(e)) {
+          await clearStaleSupabaseSession(supabase)
+        }
+      } finally {
+        done()
+      }
     })()
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted || !supabase) return
@@ -481,12 +497,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return
       }
       if (event === 'SIGNED_IN' && session?.user) {
-        const appUser = await getAppUserFromSession(supabase)
-        if (appUser) {
-          dispatch({ type: 'LOGIN', payload: appUser })
-          skipPersistRef.current = true
-          const full = await fetchFullState(supabase)
-          if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+        try {
+          const appUser = await getAppUserFromSession(supabase)
+          if (appUser) {
+            dispatch({ type: 'LOGIN', payload: appUser })
+            skipPersistRef.current = true
+            const full = await fetchFullState(supabase)
+            if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+          }
+        } catch (e) {
+          if (isStaleAuthSessionError(e)) {
+            await clearStaleSupabaseSession(supabase)
+            dispatch({ type: 'LOGOUT' })
+          }
         }
       }
     })
@@ -507,6 +530,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     } catch { /* ignore */ }
     hasRestoredRef.current = true
+    dispatch({ type: 'SESSION_RESTORE_DONE' })
   }, [])
 
   // LocalStorage に保存（Supabase 未使用時）

@@ -1,7 +1,11 @@
 'use client'
 
+import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { useApp } from '@/lib/store'
 import LessonSummary from '@/components/calendar/LessonSummary'
+import { createSupabaseClient } from '@/lib/supabase/client'
+import { getAppUserFromSession } from '@/lib/supabase/sync'
 
 /** 現在の年度（4/1〜翌3/31）の開始日・終了日 */
 function getAcademicYearRange(): { start: string; end: string } {
@@ -17,6 +21,28 @@ function getAcademicYearRange(): { start: string; end: string } {
 export default function LessonCountPage() {
   const { state } = useApp()
   const { currentUser, lessons } = state
+
+  /** 生徒の場合のみ: メール・パスワードでログイン済みか（本人確認済みか） */
+  const [studentVerified, setStudentVerified] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'student') {
+      setStudentVerified(null)
+      return
+    }
+    const supabase = createSupabaseClient()
+    if (!supabase) {
+      setStudentVerified(false)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      const sessionUser = await getAppUserFromSession(supabase)
+      if (cancelled) return
+      setStudentVerified(sessionUser?.id === currentUser.id)
+    })()
+    return () => { cancelled = true }
+  }, [currentUser?.id, currentUser?.role])
 
   if (!currentUser) return null
 
@@ -44,7 +70,6 @@ export default function LessonCountPage() {
       (l) => l.accompanistId === currentUser.id && l.date >= yearStart && l.date <= yearEnd
     ).length
   }
-  // 先生はこの画面では回数表示しない（カレンダーでサマリーを表示）
 
   const yearLabel = yearStart.slice(0, 4) + '年4月〜' + yearEnd.slice(0, 4) + '年3月'
 
@@ -57,6 +82,22 @@ export default function LessonCountPage() {
         <LessonSummary />
       ) : isAccompanist ? (
         <p className="text-gray-500">伴奏者用のレッスン回数カウントはありません。カレンダーで担当日の確認ができます。</p>
+      ) : studentVerified === null ? (
+        <div className="flex items-center justify-center py-8">
+          <div className="animate-spin w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full" />
+        </div>
+      ) : !studentVerified ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6">
+          <p className="text-sm text-amber-800 mb-4">
+            レッスン回数を表示するには、本人確認のためメールとパスワードでログインしてください。
+          </p>
+          <Link
+            href="/login"
+            className="inline-flex items-center justify-center px-4 py-2.5 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 transition"
+          >
+            メール・パスワードでログイン
+          </Link>
+        </div>
       ) : (
         <div className="space-y-4">
           <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
