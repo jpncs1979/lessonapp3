@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { generateTimeItems, getDaySummary, getDaysInMonth, today } from '@/lib/schedule'
 import { cn } from '@/lib/utils'
-import type { EndTimeMode } from '@/types'
+import type { DaySettings, EndTimeMode } from '@/types'
 
 const SWIPE_THRESHOLD = 50
 
@@ -17,8 +17,24 @@ export default function MonthCalendar() {
   const { state, dispatch, getDaySettings, getLessonsForDate } = useApp()
   const { currentUser } = state
   const now = new Date()
-  const [year, setYear] = useState(now.getFullYear())
-  const [month, setMonth] = useState(now.getMonth() + 1)
+  const CALENDAR_VIEW_KEY = 'lessonapp3_calendar_view_year_month'
+
+  const storedView = (() => {
+    if (typeof window === 'undefined') return null
+    try {
+      const raw = window.sessionStorage.getItem(CALENDAR_VIEW_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as { year?: number; month?: number }
+      if (typeof parsed?.year !== 'number' || typeof parsed?.month !== 'number') return null
+      if (parsed.month < 1 || parsed.month > 12) return null
+      return parsed
+    } catch {
+      return null
+    }
+  })()
+
+  const [year, setYear] = useState(storedView?.year ?? now.getFullYear())
+  const [month, setMonth] = useState(storedView?.month ?? now.getMonth() + 1)
   const touchStartX = useRef<number | null>(null)
 
   const days = getDaysInMonth(year, month)
@@ -30,6 +46,13 @@ export default function MonthCalendar() {
 
   const isTeacher = currentUser?.role === 'teacher'
   const PRESS_TO_BULK_MS = 250
+
+  // 表示中の年/月を保存し、戻ってきたときに同じ月へ復元する
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(CALENDAR_VIEW_KEY, JSON.stringify({ year, month }))
+    } catch { /* ignore */ }
+  }, [year, month])
 
   // 先生向け：複数選択モード（短いクリックで選択し、ボタンで一括反映）
   const [selectMode, setSelectMode] = useState(false)
@@ -81,15 +104,24 @@ export default function MonthCalendar() {
 
   const applyLessonDay = (dateStr: string, isLessonDay: boolean) => {
     const settings = getDaySettings(dateStr)
+    const nextDaySettings: DaySettings = {
+      ...settings,
+      isLessonDay,
+      // 可能日にしたときのデフォルトは 20:00（後で日付設定で変更可能）
+      ...(isLessonDay ? { endTimeMode: '20:00' as EndTimeMode } : {}),
+    }
     dispatch({
       type: 'UPSERT_DAY_SETTINGS',
       payload: {
-        ...settings,
-        isLessonDay,
-        // 可能日にしたときのデフォルトは 20:00（後で日付設定で変更可能）
-        ...(isLessonDay ? { endTimeMode: '20:00' as EndTimeMode } : {}),
+        ...nextDaySettings,
       },
     })
+
+    // 不可→可能で枠のラベル（空き/空き無し）を正しく出すため、
+    // 可能にした瞬間にその日の lessons を作り直す
+    if (isLessonDay) {
+      dispatch({ type: 'GENERATE_LESSONS_FOR_DATE', payload: { date: dateStr, daySettings: nextDaySettings } })
+    }
   }
 
   const isSelectedDate = (dateStr: string) => selectedDates.includes(dateStr)

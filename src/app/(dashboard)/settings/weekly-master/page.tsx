@@ -69,6 +69,8 @@ export default function WeeklyMasterPage() {
       next.push({ day_of_week: d, slot_index: s, student_id })
     })
     dispatch({ type: 'REPLACE_WEEKLY_MASTERS', payload: next })
+    // 週間マスター更新をカレンダーへ反映するため、isLessonDay=true の日だけ lessons を作り直す
+    dispatch({ type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS' })
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }

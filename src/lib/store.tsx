@@ -6,7 +6,7 @@ import {
   LessonStatus, EndTimeMode, Student, Accompanist, WeeklyMaster
 } from '@/types'
 import { generateId, calcProvisionalDeadline } from '@/lib/utils'
-import { today, formatDateToYYYYMMDD } from '@/lib/schedule'
+import { today, formatDateToYYYYMMDD, generateTimeItems } from '@/lib/schedule'
 import { createSupabaseClient } from '@/lib/supabase/client'
 import {
   getAppUserFromSession,
@@ -185,6 +185,8 @@ type Action =
   | { type: 'UPSERT_WEEKLY_MASTER'; payload: WeeklyMaster }
   | { type: 'REMOVE_WEEKLY_MASTER'; payload: { day_of_week: number; slot_index: number } }
   | { type: 'REPLACE_WEEKLY_MASTERS'; payload: WeeklyMaster[] }
+  | { type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS' }
+  | { type: 'GENERATE_LESSONS_FOR_DATE'; payload: { date: string; daySettings: DaySettings } }
   | { type: 'UPDATE_USER_EMAIL'; payload: { id: string; email: string } }
   | { type: 'SESSION_RESTORE_DONE' }
 
@@ -389,6 +391,91 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case 'REPLACE_WEEKLY_MASTERS':
       return { ...state, weekly_masters: action.payload }
+
+    case 'APPLY_WEEKLY_MASTERS_TO_LESSONS': {
+      // 「不可」はダミーIDで表現しているため、students の実IDとは区別する
+      const BLOCKED_STUDENT_ID = '__blocked__'
+
+      // isLessonDay が true の日だけ lessons を作り直す（カレンダーで不可の場所は触らない）
+      const lessonDates = state.daySettings.filter((s) => s.isLessonDay).map((s) => s.date)
+      const lessonDatesSet = new Set(lessonDates)
+
+      // day_of_week + slot_index(0-based) -> student_id の辞書
+      const wmMap = new Map<string, string>()
+      for (const w of state.weekly_masters) {
+        wmMap.set(`${w.day_of_week}-${w.slot_index}`, w.student_id)
+      }
+
+      const rebuilt: LessonSlot[] = []
+
+      for (const daySettings of state.daySettings) {
+        if (!daySettings.isLessonDay) continue
+
+        const [y, m, d] = daySettings.date.split('-').map(Number)
+        const day_of_week = new Date(y, m - 1, d).getDay()
+
+        // 既存 lessons を使わずに generateTimeItems の基本スロットを作り、
+        // 週間マスターで status/studentId を上書きする
+        const items = generateTimeItems(daySettings.date, daySettings, [])
+
+        for (const item of items) {
+          if (item.type !== 'slot' || !item.slot) continue
+
+          const weeklySlotIndex = typeof item.slotIndex === 'number' ? item.slotIndex - 1 : 0
+          const student_id = wmMap.get(`${day_of_week}-${weeklySlotIndex}`)
+          const isBlocked = student_id === BLOCKED_STUDENT_ID
+
+          rebuilt.push({
+            ...item.slot,
+            status: isBlocked ? 'blocked' : student_id ? 'confirmed' : 'available',
+            studentId: isBlocked ? undefined : student_id ? student_id : undefined,
+            accompanistId: undefined,
+            provisionalDeadline: undefined,
+            note: undefined,
+          })
+        }
+      }
+
+      // 対象日付の既存 lessons を全置換
+      const remaining = state.lessons.filter((l) => !lessonDatesSet.has(l.date))
+      return { ...state, lessons: [...remaining, ...rebuilt] }
+    }
+
+    case 'GENERATE_LESSONS_FOR_DATE': {
+      const BLOCKED_STUDENT_ID = '__blocked__'
+      const { date, daySettings } = action.payload
+
+      const [y, m, d] = date.split('-').map(Number)
+      const day_of_week = new Date(y, m - 1, d).getDay()
+
+      const wmMap = new Map<string, string>()
+      for (const w of state.weekly_masters) {
+        wmMap.set(`${w.day_of_week}-${w.slot_index}`, w.student_id)
+      }
+
+      const items = generateTimeItems(date, daySettings, [])
+
+      const rebuilt: LessonSlot[] = []
+      for (const item of items) {
+        if (item.type !== 'slot' || !item.slot) continue
+
+        const weeklySlotIndex = typeof item.slotIndex === 'number' ? item.slotIndex - 1 : 0
+        const student_id = wmMap.get(`${day_of_week}-${weeklySlotIndex}`)
+        const isBlocked = student_id === BLOCKED_STUDENT_ID
+
+        rebuilt.push({
+          ...item.slot,
+          status: isBlocked ? 'blocked' : student_id ? 'confirmed' : 'available',
+          studentId: isBlocked ? undefined : student_id ? student_id : undefined,
+          accompanistId: undefined,
+          provisionalDeadline: undefined,
+          note: undefined,
+        })
+      }
+
+      const remaining = state.lessons.filter((l) => l.date !== date)
+      return { ...state, lessons: [...remaining, ...rebuilt] }
+    }
 
     case 'UPDATE_USER_EMAIL': {
       const next = state.users.map((u) =>
