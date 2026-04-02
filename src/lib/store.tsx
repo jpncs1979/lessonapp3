@@ -420,28 +420,14 @@ function reducer(state: AppState, action: Action): AppState {
         const day_of_week = new Date(y, m - 1, d).getDay()
 
         // 既存 lessons を使わずに generateTimeItems の基本スロットを作り、
-        // 週間マスターで status/studentId を上書きする
+        // 週間マスターで status/studentId を上書きする（更新日は「未割当て」に戻せるように、予約済み枠も含めて上書きする）
         const items = generateTimeItems(daySettings.date, daySettings, [])
-
-        // 既存の予約（confirmed/pending）は上書きしない
-        const existingForDate = state.lessons.filter((l) => l.date === daySettings.date)
-        const existingById = new Map(existingForDate.map((l) => [l.id, l]))
-
-        const generatedSlotIds = new Set<string>()
         for (const item of items) {
           if (item.type !== 'slot' || !item.slot) continue
 
           const weeklySlotIndex = typeof item.slotIndex === 'number' ? item.slotIndex - 1 : 0
           const student_id = wmMap.get(`${day_of_week}-${weeklySlotIndex}`)
           const isBlocked = student_id === BLOCKED_STUDENT_ID
-
-          const existing = existingById.get(item.slot.id)
-          if (existing && (existing.status === 'confirmed' || existing.status === 'pending')) {
-            rebuilt.push(existing)
-            continue
-          }
-
-          generatedSlotIds.add(item.slot.id)
           rebuilt.push({
             ...item.slot,
             status: isBlocked ? 'blocked' : student_id ? 'confirmed' : 'available',
@@ -451,9 +437,6 @@ function reducer(state: AppState, action: Action): AppState {
             note: undefined,
           })
         }
-
-        // generateTimeItems に無い id（理屈上は発生しない想定）を保持したい場合はここで追加できる
-        // 今回は lessons を完全に日付単位で置き換えるため、generated 側のみを採用する
       }
 
       // 対象日付の既存 lessons を全置換
