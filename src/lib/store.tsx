@@ -185,7 +185,7 @@ type Action =
   | { type: 'UPSERT_WEEKLY_MASTER'; payload: WeeklyMaster }
   | { type: 'REMOVE_WEEKLY_MASTER'; payload: { day_of_week: number; slot_index: number } }
   | { type: 'REPLACE_WEEKLY_MASTERS'; payload: WeeklyMaster[] }
-  | { type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS' }
+  | { type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS'; payload: { effectiveFromDate: string } }
   | { type: 'GENERATE_LESSONS_FOR_DATE'; payload: { date: string; daySettings: DaySettings } }
   | { type: 'UPDATE_USER_EMAIL'; payload: { id: string; email: string } }
   | { type: 'SESSION_RESTORE_DONE' }
@@ -395,9 +395,13 @@ function reducer(state: AppState, action: Action): AppState {
     case 'APPLY_WEEKLY_MASTERS_TO_LESSONS': {
       // 「不可」はダミーIDで表現しているため、students の実IDとは区別する
       const BLOCKED_STUDENT_ID = '__blocked__'
+      const { effectiveFromDate } = action.payload
 
-      // isLessonDay が true の日だけ lessons を作り直す（カレンダーで不可の場所は触らない）
-      const lessonDates = state.daySettings.filter((s) => s.isLessonDay).map((s) => s.date)
+      // カレンダーで可能日（isLessonDay=true）かつ「更新日以降」だけ lessons を作り直す
+      // これにより過去の予定が巻き戻されるのを防ぐ
+      const lessonDates = state.daySettings
+        .filter((s) => s.isLessonDay && s.date >= effectiveFromDate)
+        .map((s) => s.date)
       const lessonDatesSet = new Set(lessonDates)
 
       // day_of_week + slot_index(0-based) -> student_id の辞書
@@ -410,6 +414,7 @@ function reducer(state: AppState, action: Action): AppState {
 
       for (const daySettings of state.daySettings) {
         if (!daySettings.isLessonDay) continue
+        if (daySettings.date < effectiveFromDate) continue
 
         const [y, m, d] = daySettings.date.split('-').map(Number)
         const day_of_week = new Date(y, m - 1, d).getDay()
@@ -418,6 +423,11 @@ function reducer(state: AppState, action: Action): AppState {
         // 週間マスターで status/studentId を上書きする
         const items = generateTimeItems(daySettings.date, daySettings, [])
 
+        // 既存の予約（confirmed/pending）は上書きしない
+        const existingForDate = state.lessons.filter((l) => l.date === daySettings.date)
+        const existingById = new Map(existingForDate.map((l) => [l.id, l]))
+
+        const generatedSlotIds = new Set<string>()
         for (const item of items) {
           if (item.type !== 'slot' || !item.slot) continue
 
@@ -425,6 +435,13 @@ function reducer(state: AppState, action: Action): AppState {
           const student_id = wmMap.get(`${day_of_week}-${weeklySlotIndex}`)
           const isBlocked = student_id === BLOCKED_STUDENT_ID
 
+          const existing = existingById.get(item.slot.id)
+          if (existing && (existing.status === 'confirmed' || existing.status === 'pending')) {
+            rebuilt.push(existing)
+            continue
+          }
+
+          generatedSlotIds.add(item.slot.id)
           rebuilt.push({
             ...item.slot,
             status: isBlocked ? 'blocked' : student_id ? 'confirmed' : 'available',
@@ -434,6 +451,9 @@ function reducer(state: AppState, action: Action): AppState {
             note: undefined,
           })
         }
+
+        // generateTimeItems に無い id（理屈上は発生しない想定）を保持したい場合はここで追加できる
+        // 今回は lessons を完全に日付単位で置き換えるため、generated 側のみを採用する
       }
 
       // 対象日付の既存 lessons を全置換

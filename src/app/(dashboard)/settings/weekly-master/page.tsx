@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ChevronLeft, Check } from 'lucide-react'
 import { useApp, makeDefaultDaySettings } from '@/lib/store'
 import { getLessonSlotList } from '@/lib/schedule'
+import { today } from '@/lib/schedule'
 import { WeeklyMaster } from '@/types'
 import Button from '@/components/ui/Button'
 
@@ -70,7 +71,7 @@ export default function WeeklyMasterPage() {
     })
     dispatch({ type: 'REPLACE_WEEKLY_MASTERS', payload: next })
     // 週間マスター更新をカレンダーへ反映するため、isLessonDay=true の日だけ lessons を作り直す
-    dispatch({ type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS' })
+    dispatch({ type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS', payload: { effectiveFromDate: today() } })
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }
