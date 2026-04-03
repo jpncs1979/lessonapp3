@@ -213,12 +213,15 @@ export default function MonthCalendar() {
 
     if (currentUser.role === 'teacher') {
       if (!isLessonDay) return { text: '不可', className: 'text-gray-300' }
+      const total = dayInfo!.total
+      const booked = (dayInfo!.confirmed ?? 0) + (dayInfo!.pending ?? 0)
       const available = dayInfo!.available ?? 0
-      if (available === 0) return { text: '空き無し', className: 'text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full font-medium' }
-      const confirmedOrPending = lessons.filter((l) => l.status === 'confirmed' || l.status === 'pending')
-      const n = confirmedOrPending.length
-      if (n > 0) return { text: `レッスンあり ${n}`, className: 'text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium' }
-      return { text: '空き', className: 'text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium' }
+      const text = `${booked}/${total}`
+      if (available === 0)
+        return { text, className: 'text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full font-medium tabular-nums' }
+      if (booked > 0)
+        return { text, className: 'text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium tabular-nums' }
+      return { text, className: 'text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium tabular-nums' }
     }
 
     if (currentUser.role === 'accompanist') {
