@@ -324,6 +324,38 @@ export async function signOutSupabase(
   await supabase.auth.signOut()
 }
 
+/** 週間マスターだけを Supabase に保存（全件削除→再挿入） */
+export async function persistWeeklyMasters(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  rows: WeeklyMaster[]
+): Promise<{ error: Error | null }> {
+  try {
+    const { data: existingWM } = await supabase.from('weekly_masters').select('day_of_week, slot_index')
+    if (existingWM?.length) {
+      for (const r of existingWM) {
+        const { error: delErr } = await supabase
+          .from('weekly_masters')
+          .delete()
+          .eq('day_of_week', r.day_of_week)
+          .eq('slot_index', r.slot_index)
+        if (delErr) return { error: delErr as unknown as Error }
+      }
+    }
+    if (rows.length > 0) {
+      const insertRows = rows.map((w) => ({
+        day_of_week: w.day_of_week,
+        slot_index: w.slot_index,
+        student_id: w.student_id,
+      }))
+      const { error } = await supabase.from('weekly_masters').insert(insertRows)
+      if (error) return { error: error as unknown as Error }
+    }
+    return { error: null }
+  } catch (e) {
+    return { error: e instanceof Error ? e : new Error(String(e)) }
+  }
+}
+
 /** 状態を Supabase に保存 */
 export async function persistState(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
@@ -387,22 +419,8 @@ export async function persistState(
       if (error) return { error: error as unknown as Error }
     }
 
-    // weekly_masters: 既存を削除して再挿入
-    const { data: existingWM } = await supabase.from('weekly_masters').select('day_of_week, slot_index')
-    if (existingWM?.length) {
-      for (const r of existingWM) {
-        await supabase.from('weekly_masters').delete().eq('day_of_week', r.day_of_week).eq('slot_index', r.slot_index)
-      }
-    }
-    if (state.weekly_masters.length > 0) {
-      const rows = state.weekly_masters.map((w) => ({
-        day_of_week: w.day_of_week,
-        slot_index: w.slot_index,
-        student_id: w.student_id,
-      }))
-      const { error } = await supabase.from('weekly_masters').insert(rows)
-      if (error) return { error: error as unknown as Error }
-    }
+    const wmErr = await persistWeeklyMasters(supabase, state.weekly_masters)
+    if (wmErr.error) return wmErr
 
     // accompanist_availabilities: 既存を削除して再挿入
     const { data: existingAv } = await supabase.from('accompanist_availabilities').select('id')

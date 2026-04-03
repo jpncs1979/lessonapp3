@@ -610,8 +610,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
           try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
           dispatch({ type: 'LOGIN', payload: appUser })
           skipPersistRef.current = true
-          const full = await fetchFullState(supabase)
-          if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+          try {
+            const full = await fetchFullState(supabase)
+            if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+          } catch {
+            if (mounted) {
+              dispatch({
+                type: 'MERGE_REMOTE_STATE',
+                payload: {
+                  lessons: [],
+                  daySettings: [],
+                  accompanistAvailabilities: [],
+                },
+              })
+            }
+          }
         } else {
           try {
             const raw = localStorage.getItem(NAME_ONLY_USER_KEY)
@@ -659,8 +672,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (appUser) {
             dispatch({ type: 'LOGIN', payload: appUser })
             skipPersistRef.current = true
-            const full = await fetchFullState(supabase)
-            if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+            try {
+              const full = await fetchFullState(supabase)
+              if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+            } catch {
+              if (mounted) {
+                dispatch({
+                  type: 'MERGE_REMOTE_STATE',
+                  payload: {
+                    lessons: [],
+                    daySettings: [],
+                    accompanistAvailabilities: [],
+                  },
+                })
+              }
+            }
           }
         } catch (e) {
           if (isStaleAuthSessionError(e)) {
