@@ -1,9 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { ChevronLeft, Check } from 'lucide-react'
 import { useApp, makeDefaultDaySettings } from '@/lib/store'
+import { createSupabaseClient } from '@/lib/supabase/client'
+import { persistState } from '@/lib/supabase/sync'
 import { getLessonSlotList } from '@/lib/schedule'
 import { today } from '@/lib/schedule'
 import { WeeklyMaster } from '@/types'
@@ -32,6 +34,9 @@ export default function WeeklyMasterPage() {
 
   const [localMap, setLocalMap] = useState<Record<string, string>>({})
   const [saved, setSaved] = useState(false)
+  const [saveNonce, setSaveNonce] = useState(0)
+  const stateRef = useRef(state)
+  stateRef.current = state
 
   useEffect(() => {
     const map: Record<string, string> = {}
@@ -40,6 +45,19 @@ export default function WeeklyMasterPage() {
     })
     setLocalMap(map)
   }, [weekly_masters])
+
+  // 週間マスターは全体保存が 1.5s デバウンスのため、更新直後に閉じると DB に届かない。反映後すぐ永続化する。
+  useEffect(() => {
+    if (saveNonce === 0) return
+    const supabase = createSupabaseClient()
+    if (!supabase) return
+    void (async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      const { error } = await persistState(supabase, stateRef.current)
+      if (error) console.error('[weekly-master] persistState', error)
+    })()
+  }, [saveNonce])
 
   if (!currentUser || currentUser.role !== 'teacher') {
     return (
@@ -72,6 +90,7 @@ export default function WeeklyMasterPage() {
     dispatch({ type: 'REPLACE_WEEKLY_MASTERS', payload: next })
     // 週間マスター更新をカレンダーへ反映するため、isLessonDay=true の日だけ lessons を作り直す
     dispatch({ type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS', payload: { effectiveFromDate: today() } })
+    setSaveNonce((n) => n + 1)
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }

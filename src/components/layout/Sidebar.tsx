@@ -75,7 +75,7 @@ export default function Sidebar() {
           {isStudentOrAccompanist && (
             <button
               type="button"
-              onClick={() => refreshFromServer()}
+              onClick={() => void refreshFromServer()}
               className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
             >
               <RefreshCw size={14} />

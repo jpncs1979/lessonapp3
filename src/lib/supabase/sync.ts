@@ -174,6 +174,7 @@ export async function fetchFullState(
     slot_index: r.slot_index,
     student_id: r.student_id,
   }))
+  // 取得エラー時に [] をマージすると別端末で週間マスターが空に見えるため、キーごと省略する
 
   const accompanistAvailabilities: AccompanistAvailability[] = (availRes.data ?? []).map((r: DbAvailability) => ({
     id: r.id,
@@ -188,7 +189,7 @@ export async function fetchFullState(
     accompanists,
     daySettings,
     lessons,
-    weekly_masters,
+    ...(weeklyRes.error ? {} : { weekly_masters }),
     accompanistAvailabilities,
   }
 }

@@ -502,8 +502,8 @@ interface AppContextType {
   getLessonsForDate: (date: string) => LessonSlot[]
   getAvailabilitiesForSlot: (slotId: string) => AccompanistAvailability[]
   getAvailabilitiesForAccompanist: (accompanistId: string) => AccompanistAvailability[]
-  /** サーバーから最新の日設定・レッスン等を再取得（生徒・伴奏者向け） */
-  refreshFromServer: () => Promise<void>
+  /** サーバーから最新の日設定・レッスン・週間マスター等を再取得（全ロール） */
+  refreshFromServer: () => Promise<{ ok: boolean; message?: string }>
 }
 
 const AppContext = createContext<AppContextType | null>(null)
@@ -761,9 +761,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshFromServer = useCallback(async () => {
     const supabase = supabaseRef.current
-    if (!supabase) return
-    const full = await fetchFullState(supabase)
-    if (full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+    if (!supabase) return { ok: false, message: '同期先（Supabase）が設定されていません' }
+    try {
+      const full = await fetchFullState(supabase)
+      skipPersistRef.current = true
+      dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+      return { ok: true }
+    } catch (e) {
+      return {
+        ok: false,
+        message: e instanceof Error ? e.message : 'サーバーからの取得に失敗しました',
+      }
+    }
   }, [])
 
   // 生徒・伴奏者は定期的にサーバーから再取得（先生の設定・レッスン反映のため）
