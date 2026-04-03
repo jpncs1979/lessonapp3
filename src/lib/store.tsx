@@ -13,6 +13,7 @@ import {
   getAppUserByAuthUid,
   fetchAppUsers,
   fetchFullState,
+  fetchFullStateWithTimeout,
   persistState,
   persistLessonsOnly,
   persistAccompanistAvailabilities,
@@ -763,7 +764,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const supabase = supabaseRef.current
     if (!supabase) return { ok: false, message: '同期先（Supabase）が設定されていません' }
     try {
-      const full = await fetchFullState(supabase)
+      const full = await fetchFullStateWithTimeout(supabase)
       skipPersistRef.current = true
       dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
       return { ok: true }

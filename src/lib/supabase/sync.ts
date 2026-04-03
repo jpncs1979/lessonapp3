@@ -194,6 +194,32 @@ export async function fetchFullState(
   }
 }
 
+const FETCH_FULL_STATE_TIMEOUT_MS = 28_000
+
+/** fetchFullState が通信ハングで終わらないときに UI が固まらないよう上限を設ける */
+export async function fetchFullStateWithTimeout(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  timeoutMs: number = FETCH_FULL_STATE_TIMEOUT_MS
+): Promise<Partial<AppState>> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(
+      () =>
+        reject(
+          new Error(
+            'サーバーからの応答がタイムアウトしました。通信や VPN を確認し、再度「最新を取得」を試してください。'
+          )
+        ),
+      timeoutMs
+    )
+  })
+  try {
+    return await Promise.race([fetchFullState(supabase), timeoutPromise])
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+  }
+}
+
 /** 「名前を選択して入る」用：登録済みの生徒・伴奏者だけ（先生は含まない） */
 export async function fetchRegisteredUsersForEnter(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>

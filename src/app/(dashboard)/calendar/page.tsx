@@ -40,6 +40,11 @@ export default function CalendarPage() {
       } else {
         setSyncHint({ ok: false, text: r.message ?? '取得に失敗しました' })
       }
+    } catch (e) {
+      setSyncHint({
+        ok: false,
+        text: e instanceof Error ? e.message : '取得に失敗しました',
+      })
     } finally {
       setSyncing(false)
     }
