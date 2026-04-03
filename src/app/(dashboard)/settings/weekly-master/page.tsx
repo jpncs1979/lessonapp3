@@ -55,6 +55,7 @@ export default function WeeklyMasterPage() {
   const { students, weekly_masters, currentUser } = state
 
   const [localMap, setLocalMap] = useState<Record<string, string>>({})
+  const [activeDayOfWeek, setActiveDayOfWeek] = useState<number>(() => new Date().getDay())
   const [saveNonce, setSaveNonce] = useState(0)
   const stateRef = useRef(state)
   stateRef.current = state
@@ -211,49 +212,76 @@ export default function WeeklyMasterPage() {
       </div>
 
       <div className="space-y-6">
-        {DAY_LABELS.map(({ value: day_of_week, label }) => (
-          <section key={day_of_week} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <h2 className="text-sm font-semibold text-gray-900 mb-4">曜日: {label}</h2>
-            <div className="space-y-2">
-              {slotList.map((row, index) => {
-                if (row.isBreak || row.isLunch) {
-                  const rowType = row.isLunch ? 'lunch' : 'break'
+        <div className="flex flex-wrap items-center gap-2">
+          {DAY_LABELS.map(({ value, label }) => {
+            const active = value === activeDayOfWeek
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setActiveDayOfWeek(value)}
+                className={[
+                  'px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-colors',
+                  active
+                    ? 'bg-indigo-600 border-indigo-600 text-white'
+                    : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50',
+                ].join(' ')}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+
+        {(() => {
+          const activeLabel = DAY_LABELS.find((d) => d.value === activeDayOfWeek)?.label ?? ''
+          const day_of_week = activeDayOfWeek
+          return (
+            <section key={day_of_week} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+              <h2 className="text-sm font-semibold text-gray-900 mb-4">曜日: {activeLabel}</h2>
+              <div className="space-y-2">
+                {slotList.map((row, index) => {
+                  if (row.isBreak || row.isLunch) {
+                    const rowType = row.isLunch ? 'lunch' : 'break'
+                    return (
+                      <div
+                        key={`${day_of_week}-${index}-${row.startTime}-${rowType}`}
+                        className="flex items-center gap-3 py-2 px-3 bg-gray-100 rounded-lg text-gray-500 text-sm"
+                      >
+                        <span className="w-24 flex-shrink-0">{row.startTime} 〜 {row.endTime}</span>
+                        <span>{row.isLunch ? '昼休み' : '休憩'}</span>
+                      </div>
+                    )
+                  }
+                  const currentId = getLocalStudentId(day_of_week, row.slot_index)
                   return (
                     <div
-                      key={`${day_of_week}-${index}-${row.startTime}-${rowType}`}
-                      className="flex items-center gap-3 py-2 px-3 bg-gray-100 rounded-lg text-gray-500 text-sm"
+                      key={`${day_of_week}-${row.slot_index}`}
+                      className="flex items-center gap-3 py-2"
                     >
-                      <span className="w-24 flex-shrink-0">{row.startTime} 〜 {row.endTime}</span>
-                      <span>{row.isLunch ? '昼休み' : '休憩'}</span>
+                      <span className="w-24 flex-shrink-0 text-sm text-gray-700">
+                        {row.startTime} 〜 {row.endTime}
+                      </span>
+                      <select
+                        value={currentId}
+                        onChange={(e) => setLocalStudent(day_of_week, row.slot_index, e.target.value)}
+                        className="flex-1 max-w-xs border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                      >
+                        <option value="">未割り当て（空き）</option>
+                        <option value={BLOCKED_STUDENT_ID}>不可（レッスン不可）</option>
+                        {students.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   )
-                }
-                const currentId = getLocalStudentId(day_of_week, row.slot_index)
-                return (
-                  <div
-                    key={`${day_of_week}-${row.slot_index}`}
-                    className="flex items-center gap-3 py-2"
-                  >
-                    <span className="w-24 flex-shrink-0 text-sm text-gray-700">
-                      {row.startTime} 〜 {row.endTime}
-                    </span>
-                    <select
-                      value={currentId}
-                      onChange={(e) => setLocalStudent(day_of_week, row.slot_index, e.target.value)}
-                      className="flex-1 max-w-xs border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                    >
-                      <option value="">未割り当て（空き）</option>
-                      <option value={BLOCKED_STUDENT_ID}>不可（レッスン不可）</option>
-                      {students.map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-        ))}
+                })}
+              </div>
+            </section>
+          )
+        })()}
       </div>
     </div>
   )
