@@ -12,6 +12,13 @@ const SWIPE_THRESHOLD = 50
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
 
+/** 日付セル内のマーカー（生徒は主に丸、レッスンのみ文字） */
+type CalendarDayMark =
+  | { kind: 'none' }
+  | { kind: 'dash' }
+  | { kind: 'dot'; className: string }
+  | { kind: 'pill'; text: string; className: string }
+
 export default function MonthCalendar() {
   const router = useRouter()
   const { state, dispatch, getDaySettings, getLessonsForDate } = useApp()
@@ -193,43 +200,59 @@ export default function MonthCalendar() {
     return getDaySummary(items)
   }
 
-  /** 日付の表示ラベル（役割別） */
-  const getDayLabel = (dateStr: string): { text: string; className?: string } => {
+  /** 日付セル内のマーカー（役割別） */
+  const getDayMark = (dateStr: string): CalendarDayMark => {
     const lessons = getLessonsForDate(dateStr)
     const dayInfo = getDayInfo(dateStr)
     const isLessonDay = !!dayInfo
 
     if (!currentUser) {
-      if (!isLessonDay) return { text: '不可', className: 'text-gray-300' }
-      return { text: `レッスン可${dayInfo!.available}/${dayInfo!.total}`, className: 'text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium' }
+      if (!isLessonDay) return { kind: 'dash' }
+      const available = dayInfo!.available ?? 0
+      if (available === 0) return { kind: 'dot', className: 'bg-gray-400' }
+      return { kind: 'dot', className: 'bg-emerald-500' }
     }
 
     if (currentUser.role === 'student') {
-      if (!isLessonDay) return { text: '不可', className: 'text-gray-300' }
+      if (!isLessonDay) return { kind: 'dash' }
       const myLessons = lessons.filter((l) => (l.status === 'confirmed' || l.status === 'pending') && l.studentId === currentUser.id)
-      if (myLessons.length > 0) return { text: 'レッスン', className: 'text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium' }
-      return { text: '空きあり', className: 'text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium' }
+      if (myLessons.length > 0) {
+        return {
+          kind: 'pill',
+          text: 'レッスン',
+          className: 'text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium',
+        }
+      }
+      const available = dayInfo!.available ?? 0
+      if (available === 0) return { kind: 'dot', className: 'bg-gray-400' }
+      return { kind: 'dot', className: 'bg-emerald-500' }
     }
 
     if (currentUser.role === 'teacher') {
-      if (!isLessonDay) return { text: '不可', className: 'text-gray-300' }
-      const total = dayInfo!.total
+      if (!isLessonDay) return { kind: 'dash' }
       const booked = (dayInfo!.confirmed ?? 0) + (dayInfo!.pending ?? 0)
       const available = dayInfo!.available ?? 0
-      const text = `${booked}/${total}`
-      if (available === 0)
-        return { text, className: 'text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full font-medium tabular-nums' }
-      if (booked > 0)
-        return { text, className: 'text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium tabular-nums' }
-      return { text, className: 'text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium tabular-nums' }
+      const text = `${booked}`
+      if (available === 0) {
+        return {
+          kind: 'pill',
+          text,
+          className: 'text-xs bg-gray-200 text-gray-600 px-1.5 py-0.5 rounded-full font-medium tabular-nums',
+        }
+      }
+      // 空き枠が1つでもあれば凡例どおり緑系（予約件数バッジのまま）
+      return {
+        kind: 'pill',
+        text,
+        className: 'text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium tabular-nums',
+      }
     }
 
     if (currentUser.role === 'accompanist') {
-      // 伴奏者：赤枠で「私のレッスン」を示すため、同じ内容のテキストラベルは出さない
-      return { text: '', className: '' }
+      return { kind: 'none' }
     }
 
-    return { text: '', className: '' }
+    return { kind: 'none' }
   }
 
   return (
@@ -274,9 +297,42 @@ export default function MonthCalendar() {
         </div>
       )}
 
+      {/* 生徒：マーカー凡例（セル内は ー / 丸／「レッスン」バッジ） */}
+      {currentUser?.role === 'student' && (
+        <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50/40 text-[10px] text-gray-500 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+          <span className="inline-flex items-center gap-1">
+            <span className="text-gray-300 leading-none">ー</span>
+            <span>不可</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-gray-400 shrink-0" aria-hidden />
+            <span>空きなし</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" aria-hidden />
+            <span>空きあり</span>
+          </span>
+        </div>
+      )}
+
       {/* 先生向け：操作ガイド */}
       {isTeacher && (
         <div className="px-3 py-2 border-b border-gray-100 bg-indigo-50/60 text-[10px] text-indigo-700">
+          <p className="text-center text-gray-600 leading-snug px-1 mb-2">
+            <span className="inline-flex items-center gap-0.5">
+              <span className="text-gray-400 font-medium leading-none">ー</span>
+              <span>は不可、</span>
+            </span>
+            <span className="inline-flex items-center gap-1 mx-0.5">
+              <span className="inline-block w-2 h-2 rounded-full bg-gray-400 shrink-0 align-middle" aria-hidden />
+              <span>は空きなし、</span>
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 shrink-0 align-middle" aria-hidden />
+              <span>は空きあり</span>
+            </span>
+            <span>。</span>
+          </p>
           <div className="flex items-center justify-center gap-3">
             <span>クリックで詳細へ、長押しで可能/不可を切替（範囲一括）</span>
             <button
@@ -371,7 +427,7 @@ export default function MonthCalendar() {
           const isPast = dateStr < todayStr
           const col = (i + firstDay) % 7
 
-          const label = getDayLabel(dateStr)
+          const mark = getDayMark(dateStr)
           const dayInfo = getDayInfo(dateStr)
           const isLessonDay = !!dayInfo
           const lessonsOnDay = getLessonsForDate(dateStr)
@@ -513,11 +569,22 @@ export default function MonthCalendar() {
                 )}
               </div>
 
-              {/* 日付ラベル（役割別） */}
-              <div className="text-center">
-                {label.text && (
-                  <span className={cn('text-center inline-block', label.className)}>
-                    {label.text}
+              {/* 日付マーカー（丸・ー・バッジ） */}
+              <div className="text-center min-h-[18px] flex items-center justify-center">
+                {mark.kind === 'dash' && (
+                  <span className="text-sm text-gray-300 font-medium leading-none" aria-hidden>
+                    ー
+                  </span>
+                )}
+                {mark.kind === 'dot' && (
+                  <span
+                    className={cn('inline-block w-2.5 h-2.5 rounded-full shrink-0', mark.className)}
+                    aria-hidden
+                  />
+                )}
+                {mark.kind === 'pill' && (
+                  <span className={cn('text-center inline-block max-w-full truncate', mark.className)}>
+                    {mark.text}
                   </span>
                 )}
               </div>
