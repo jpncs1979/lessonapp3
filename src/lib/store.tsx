@@ -187,7 +187,7 @@ type Action =
   | { type: 'REMOVE_WEEKLY_MASTER'; payload: { day_of_week: number; slot_index: number } }
   | { type: 'REPLACE_WEEKLY_MASTERS'; payload: WeeklyMaster[] }
   | { type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS'; payload: { effectiveFromDate: string } }
-  | { type: 'GENERATE_LESSONS_FOR_DATE'; payload: { date: string; daySettings: DaySettings } }
+  | { type: 'GENERATE_LESSONS_FOR_DATE'; payload: { date: string; daySettings: DaySettings; openAsAllAvailable?: boolean } }
   | { type: 'UPDATE_USER_EMAIL'; payload: { id: string; email: string } }
   | { type: 'SESSION_RESTORE_DONE' }
 
@@ -447,7 +447,7 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'GENERATE_LESSONS_FOR_DATE': {
       const BLOCKED_STUDENT_ID = '__blocked__'
-      const { date, daySettings } = action.payload
+      const { date, daySettings, openAsAllAvailable } = action.payload
 
       const [y, m, d] = date.split('-').map(Number)
       const day_of_week = new Date(y, m - 1, d).getDay()
@@ -464,13 +464,13 @@ function reducer(state: AppState, action: Action): AppState {
         if (item.type !== 'slot' || !item.slot) continue
 
         const weeklySlotIndex = typeof item.slotIndex === 'number' ? item.slotIndex - 1 : 0
-        const student_id = wmMap.get(`${day_of_week}-${weeklySlotIndex}`)
-        const isBlocked = student_id === BLOCKED_STUDENT_ID
+        const student_id = openAsAllAvailable ? undefined : wmMap.get(`${day_of_week}-${weeklySlotIndex}`)
+        const isBlocked = !openAsAllAvailable && student_id === BLOCKED_STUDENT_ID
 
         rebuilt.push({
           ...item.slot,
-          status: isBlocked ? 'blocked' : student_id ? 'confirmed' : 'available',
-          studentId: isBlocked ? undefined : student_id ? student_id : undefined,
+          status: openAsAllAvailable ? 'available' : isBlocked ? 'blocked' : student_id ? 'confirmed' : 'available',
+          studentId: openAsAllAvailable ? undefined : isBlocked ? undefined : student_id ? student_id : undefined,
           accompanistId: undefined,
           provisionalDeadline: undefined,
           note: undefined,

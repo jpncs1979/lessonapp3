@@ -36,6 +36,7 @@ export default function MonthCalendar() {
   const [year, setYear] = useState(storedView?.year ?? now.getFullYear())
   const [month, setMonth] = useState(storedView?.month ?? now.getMonth() + 1)
   const touchStartX = useRef<number | null>(null)
+  const dayGridRef = useRef<HTMLDivElement>(null)
 
   const days = getDaysInMonth(year, month)
   const firstDay = new Date(year, month - 1, 1).getDay() // 0=日
@@ -53,6 +54,15 @@ export default function MonthCalendar() {
       window.sessionStorage.setItem(CALENDAR_VIEW_KEY, JSON.stringify({ year, month }))
     } catch { /* ignore */ }
   }, [year, month])
+
+  // 長押しで「空き無し/不可」切替時にラベル文字が選択状態にならないようにする
+  useEffect(() => {
+    const el = dayGridRef.current
+    if (!el) return
+    const prevent = (e: Event) => e.preventDefault()
+    el.addEventListener('selectstart', prevent)
+    return () => el.removeEventListener('selectstart', prevent)
+  }, [])
 
   // 先生向け：複数選択モード（短いクリックで選択し、ボタンで一括反映）
   const [selectMode, setSelectMode] = useState(false)
@@ -104,6 +114,7 @@ export default function MonthCalendar() {
 
   const applyLessonDay = (dateStr: string, isLessonDay: boolean) => {
     const settings = getDaySettings(dateStr)
+    const wasLessonDay = settings.isLessonDay
     const nextDaySettings: DaySettings = {
       ...settings,
       isLessonDay,
@@ -118,9 +129,17 @@ export default function MonthCalendar() {
     })
 
     // 不可→可能で枠のラベル（空き/空き無し）を正しく出すため、
-    // 可能にした瞬間にその日の lessons を作り直す
+    // 可能にした瞬間にその日の lessons を作り直す。
+    // 不可→可能のときは週間マスターを当てず全枠「空き」にする（長押し切替の期待どおり）
     if (isLessonDay) {
-      dispatch({ type: 'GENERATE_LESSONS_FOR_DATE', payload: { date: dateStr, daySettings: nextDaySettings } })
+      dispatch({
+        type: 'GENERATE_LESSONS_FOR_DATE',
+        payload: {
+          date: dateStr,
+          daySettings: nextDaySettings,
+          openAsAllAvailable: !wasLessonDay,
+        },
+      })
     }
   }
 
@@ -333,7 +352,11 @@ export default function MonthCalendar() {
 
       {/* 日付グリッド（モバイルでスクロール可能） */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="grid grid-cols-7">
+        <div
+          ref={dayGridRef}
+          className="grid grid-cols-7 select-none"
+          style={{ WebkitUserSelect: 'none' }}
+        >
         {blanks.map((_, i) => (
           <div key={`blank-${i}`} className="min-h-[52px] sm:min-h-[72px] border-b border-r border-gray-50 last:border-r-0" />
         ))}
