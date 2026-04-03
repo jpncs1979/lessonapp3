@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { ChevronLeft, Check, Save } from 'lucide-react'
 import { useApp, makeDefaultDaySettings } from '@/lib/store'
+import { cn } from '@/lib/utils'
 import { createSupabaseClient } from '@/lib/supabase/client'
 import { persistState, persistWeeklyMasters } from '@/lib/supabase/sync'
 import { getLessonSlotList } from '@/lib/schedule'
@@ -265,10 +266,17 @@ export default function WeeklyMasterPage() {
                       <select
                         value={currentId}
                         onChange={(e) => setLocalStudent(day_of_week, row.slot_index, e.target.value)}
-                        className="flex-1 max-w-xs border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                      className={cn(
+                        'flex-1 max-w-xs border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2',
+                        currentId === BLOCKED_STUDENT_ID
+                          ? 'bg-gray-100 border-gray-300 text-gray-500 opacity-80 focus:ring-gray-200'
+                          : currentId
+                            ? 'bg-indigo-50 border-indigo-300 text-indigo-800 focus:ring-indigo-200'
+                            : 'bg-white border-gray-200 text-gray-900 focus:ring-indigo-200'
+                      )}
                       >
                         <option value="">未割り当て（空き）</option>
-                        <option value={BLOCKED_STUDENT_ID}>不可（レッスン不可）</option>
+                      <option value={BLOCKED_STUDENT_ID}>不可</option>
                         {students.map((s) => (
                           <option key={s.id} value={s.id}>
                             {s.name}
