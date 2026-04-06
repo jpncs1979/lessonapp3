@@ -4,12 +4,10 @@ import { useState, useEffect } from 'react'
 import { Clock, User, Music, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useApp } from '@/lib/store'
-import { generateTimeItems, formatDate, formatDateToYYYYMMDD } from '@/lib/schedule'
+import { generateTimeItems, formatDate, formatDateToYYYYMMDD, today } from '@/lib/schedule'
 import { TimeItem, LessonSlot } from '@/types'
 import { cn, getInitials, generateId } from '@/lib/utils'
 import BookingModal from '@/components/booking/BookingModal'
-import { createSupabaseClient } from '@/lib/supabase/client'
-import { insertActivityLog } from '@/lib/supabase/sync'
 
 interface DayTimetableProps {
   date: string
@@ -43,6 +41,11 @@ export default function DayTimetable({ date }: DayTimetableProps) {
     router.push(`/day/${formatDateToYYYYMMDD(dt)}`)
   }
 
+  const todayStr = today()
+  const goToToday = () => {
+    if (date !== todayStr) router.push(`/day/${todayStr}`)
+  }
+
   // 前日・翌日ルートを事前読み込み → タップ時の遷移を高速化
   useEffect(() => {
     const [y, m, d] = date.split('-').map(Number)
@@ -50,11 +53,11 @@ export default function DayTimetable({ date }: DayTimetableProps) {
     const next = new Date(y, m - 1, d); next.setDate(next.getDate() + 1)
     router.prefetch(`/day/${formatDateToYYYYMMDD(prev)}`)
     router.prefetch(`/day/${formatDateToYYYYMMDD(next)}`)
-  }, [date, router])
+    router.prefetch(`/day/${todayStr}`)
+  }, [date, router, todayStr])
 
   const handleSlotClick = (slot: LessonSlot) => {
     if (slot.status === 'break' || slot.status === 'lunch') return
-    const supabase = createSupabaseClient()
     // 先生: 不可枠は1タップでレッスン可に。空き枠も1タップで不可に。確定・保留はモーダルで生徒・伴奏者を指定／変更
     if (isTeacher) {
       if (slot.status === 'blocked') {
@@ -87,54 +90,20 @@ export default function DayTimetable({ date }: DayTimetableProps) {
       if (slot.status === 'available') {
         if (myAv) {
           dispatch({ type: 'REMOVE_AVAILABILITY', payload: { slotId: slot.id, accompanistId: currentUser.id } })
-          insertActivityLog(supabase, {
-            actorId: currentUser.id,
-            actorName: currentUser.name,
-            action: 'availability_removed',
-            lessonId: slot.id,
-            lessonDate: slot.date,
-            lessonStartTime: slot.startTime,
-          })
         } else {
           dispatch({
             type: 'ADD_AVAILABILITY',
             payload: { id: generateId(), slotId: slot.id, accompanistId: currentUser.id, createdAt: new Date().toISOString() },
-          })
-          insertActivityLog(supabase, {
-            actorId: currentUser.id,
-            actorName: currentUser.name,
-            action: 'availability_added',
-            lessonId: slot.id,
-            lessonDate: slot.date,
-            lessonStartTime: slot.startTime,
           })
         }
         return
       }
       if (slot.status === 'confirmed' && slot.studentId && !slot.accompanistId) {
         dispatch({ type: 'UPDATE_LESSON', payload: { id: slot.id, accompanistId: currentUser.id } })
-        insertActivityLog(supabase, {
-          actorId: currentUser.id,
-          actorName: currentUser.name,
-          action: 'accompanist_added',
-          lessonId: slot.id,
-          lessonDate: slot.date,
-          lessonStartTime: slot.startTime,
-          details: { studentName: getUserById(slot.studentId)?.name },
-        })
         return
       }
       if (slot.status === 'confirmed' && slot.accompanistId === currentUser.id) {
         dispatch({ type: 'UPDATE_LESSON', payload: { id: slot.id, accompanistId: undefined } })
-        insertActivityLog(supabase, {
-          actorId: currentUser.id,
-          actorName: currentUser.name,
-          action: 'accompanist_removed',
-          lessonId: slot.id,
-          lessonDate: slot.date,
-          lessonStartTime: slot.startTime,
-          details: { studentName: getUserById(slot.studentId)?.name },
-        })
         return
       }
     }
@@ -168,22 +137,9 @@ export default function DayTimetable({ date }: DayTimetableProps) {
     if (accompanistId) {
       dispatch({ type: 'CONFIRM_ACCOMPANIED', payload: { slotId: slot.id } })
     }
-    insertActivityLog(createSupabaseClient(), {
-      actorId: currentUser.id,
-      actorName: currentUser.name,
-      action: 'lesson_booked',
-      lessonId: slot.id,
-      lessonDate: slot.date,
-      lessonStartTime: slot.startTime,
-      details: {
-        studentName: currentUser.name,
-        accompanistName: accompanistId ? getUserById(accompanistId)?.name : undefined,
-      },
-    })
   }
 
   const handleCancelForStudent = (slot: LessonSlot) => {
-    const studentName = getUserById(slot.studentId)?.name
     dispatch({
       type: 'UPDATE_LESSON',
       payload: {
@@ -194,17 +150,6 @@ export default function DayTimetable({ date }: DayTimetableProps) {
         provisionalDeadline: undefined,
       },
     })
-    if (currentUser) {
-      insertActivityLog(createSupabaseClient(), {
-        actorId: currentUser.id,
-        actorName: currentUser.name,
-        action: 'lesson_cancelled',
-        lessonId: slot.id,
-        lessonDate: slot.date,
-        lessonStartTime: slot.startTime,
-        details: studentName ? { studentName } : undefined,
-      })
-    }
   }
 
   return (
@@ -226,6 +171,26 @@ export default function DayTimetable({ date }: DayTimetableProps) {
           {!settings.isLessonDay && (
             <span className="text-xs text-gray-400">レッスンなし</span>
           )}
+          <button
+            type="button"
+            onPointerDown={() => goToToday()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                goToToday()
+              }
+            }}
+            disabled={date === todayStr}
+            className={cn(
+              'mt-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border min-h-[36px] transition-colors touch-manipulation select-none',
+              date === todayStr
+                ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-default'
+                : 'border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-50 active:bg-indigo-100'
+            )}
+            aria-label="今日のスケジュールへ"
+          >
+            今日
+          </button>
         </div>
         <button
           type="button"

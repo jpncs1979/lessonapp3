@@ -8,8 +8,6 @@ import { useApp } from '@/lib/store'
 import { generateTimeItems } from '@/lib/schedule'
 import { LessonSlot, AccompanistAvailability, TimeItem } from '@/types'
 import { cn, getInitials, generateId } from '@/lib/utils'
-import { createSupabaseClient } from '@/lib/supabase/client'
-import { insertActivityLog } from '@/lib/supabase/sync'
 
 interface BookingModalProps {
   open: boolean
@@ -88,18 +86,6 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
       dispatch({ type: 'CONFIRM_ACCOMPANIED', payload: { slotId: slot.id } })
     }
 
-    insertActivityLog(createSupabaseClient(), {
-      actorId: currentUser.id,
-      actorName: currentUser.name,
-      action: 'lesson_booked',
-      lessonId: slot.id,
-      lessonDate: slot.date,
-      lessonStartTime: slot.startTime,
-      details: {
-        studentName: currentUser.name,
-        accompanistName: acc ? getUserById(acc)?.name : undefined,
-      },
-    })
     setSubmitted(true)
   }
 
@@ -114,18 +100,6 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
         provisionalDeadline: undefined,
       },
     })
-    // 先生の「枠をブロック」はログに残さない。生徒・伴奏者によるキャンセルのみログ
-    if (currentUser && currentUser.role !== 'teacher') {
-      insertActivityLog(createSupabaseClient(), {
-        actorId: currentUser.id,
-        actorName: currentUser.name,
-        action: 'lesson_cancelled',
-        lessonId: slot.id,
-        lessonDate: slot.date,
-        lessonStartTime: slot.startTime,
-        details: student ? { studentName: student.name } : undefined,
-      })
-    }
     onClose()
   }
 
@@ -152,18 +126,6 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
     if (assignAccompanistId) {
       dispatch({ type: 'CONFIRM_ACCOMPANIED', payload: { slotId: slot.id } })
     }
-    insertActivityLog(createSupabaseClient(), {
-      actorId: currentUser.id,
-      actorName: currentUser.name,
-      action: 'lesson_assigned',
-      lessonId: slot.id,
-      lessonDate: slot.date,
-      lessonStartTime: slot.startTime,
-      details: {
-        studentName: getUserById(assignStudentId)?.name,
-        accompanistName: assignAccompanistId ? getUserById(assignAccompanistId)?.name : undefined,
-      },
-    })
     setAssignStudentId('')
     setAssignAccompanistId('')
     onClose()
@@ -175,26 +137,10 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
     const existing = availabilities.find((a) => a.accompanistId === currentUser.id)
     if (existing) {
       dispatch({ type: 'REMOVE_AVAILABILITY', payload: { slotId: slot.id, accompanistId: currentUser.id } })
-      insertActivityLog(createSupabaseClient(), {
-        actorId: currentUser.id,
-        actorName: currentUser.name,
-        action: 'availability_removed',
-        lessonId: slot.id,
-        lessonDate: slot.date,
-        lessonStartTime: slot.startTime,
-      })
     } else {
       dispatch({
         type: 'ADD_AVAILABILITY',
         payload: { id: generateId(), slotId: slot.id, accompanistId: currentUser.id, createdAt: new Date().toISOString() },
-      })
-      insertActivityLog(createSupabaseClient(), {
-        actorId: currentUser.id,
-        actorName: currentUser.name,
-        action: 'availability_added',
-        lessonId: slot.id,
-        lessonDate: slot.date,
-        lessonStartTime: slot.startTime,
       })
     }
   }

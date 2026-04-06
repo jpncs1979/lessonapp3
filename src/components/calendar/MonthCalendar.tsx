@@ -181,6 +181,19 @@ export default function MonthCalendar() {
     else setMonth(m => m + 1)
   }
 
+  const goToTodayMonth = () => {
+    const t = today()
+    const [y, m] = t.split('-').map(Number)
+    setYear(y)
+    setMonth(m)
+  }
+
+  const viewingTodayMonth = (() => {
+    const t = today()
+    const [y, m] = t.split('-').map(Number)
+    return year === y && month === m
+  })()
+
   const onTouchStart = (e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX
   }
@@ -262,14 +275,29 @@ export default function MonthCalendar() {
       onTouchEnd={onTouchEnd}
     >
       {/* ヘッダー */}
-      <div className="flex items-center justify-between px-3 sm:px-5 py-2.5 sm:py-4 border-b border-gray-100 flex-shrink-0">
-        <button onClick={prevMonth} className="p-1.5 sm:p-2 rounded-lg hover:bg-gray-100 transition-colors">
+      <div className="flex items-center justify-between px-3 sm:px-5 py-2.5 sm:py-4 border-b border-gray-100 flex-shrink-0 gap-2">
+        <button type="button" onClick={prevMonth} className="p-1.5 sm:p-2 rounded-lg hover:bg-gray-100 transition-colors shrink-0" aria-label="前の月">
           <ChevronLeft size={18} className="text-gray-600" />
         </button>
-        <h2 className="text-sm sm:text-base font-semibold text-gray-900">
-          {year}年 {month}月
-        </h2>
-        <button onClick={nextMonth} className="p-1.5 sm:p-2 rounded-lg hover:bg-gray-100 transition-colors">
+        <div className="flex flex-col items-center gap-1 min-w-0 flex-1">
+          <h2 className="text-sm sm:text-base font-semibold text-gray-900 text-center">
+            {year}年 {month}月
+          </h2>
+          <button
+            type="button"
+            onClick={goToTodayMonth}
+            disabled={viewingTodayMonth}
+            className={cn(
+              'text-xs font-medium px-2.5 py-1 rounded-lg border transition-colors',
+              viewingTodayMonth
+                ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-default'
+                : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50 active:bg-indigo-100'
+            )}
+          >
+            今日
+          </button>
+        </div>
+        <button type="button" onClick={nextMonth} className="p-1.5 sm:p-2 rounded-lg hover:bg-gray-100 transition-colors shrink-0" aria-label="次の月">
           <ChevronRight size={18} className="text-gray-600" />
         </button>
       </div>

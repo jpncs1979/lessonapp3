@@ -195,6 +195,36 @@ export function today(): string {
   return formatDateToYYYYMMDD(new Date())
 }
 
+/** アンカー日を含む週の月曜〜日曜（各 YYYY-MM-DD）。月曜始まり */
+export function getWeekDateRangeMonday(anchorDate: string): string[] {
+  const [y, m, d] = anchorDate.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  const day = dt.getDay()
+  const offsetToMonday = day === 0 ? -6 : 1 - day
+  const monday = new Date(dt)
+  monday.setDate(dt.getDate() + offsetToMonday)
+  const out: string[] = []
+  for (let i = 0; i < 7; i++) {
+    const x = new Date(monday)
+    x.setDate(monday.getDate() + i)
+    out.push(formatDateToYYYYMMDD(x))
+  }
+  return out
+}
+
+/** 週範囲の見出し用（例: 4月7日〜4月13日） */
+export function formatWeekRangeJa(weekDates: string[]): string {
+  if (weekDates.length < 7) return ''
+  const first = weekDates[0]
+  const last = weekDates[6]
+  const [y1, m1, d1] = first.split('-').map(Number)
+  const [y2, m2, d2] = last.split('-').map(Number)
+  if (y1 === y2) {
+    return `${m1}月${d1}日〜${m2}月${d2}日`
+  }
+  return `${y1}年${m1}月${d1}日〜${y2}年${m2}月${d2}日`
+}
+
 /** 指定月の全日付を返す（ローカル） */
 export function getDaysInMonth(year: number, month: number): string[] {
   const days: string[] = []

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Calendar, Settings, LogOut, Music, BarChart3, ClipboardList, RefreshCw } from 'lucide-react'
+import { Calendar, Settings, LogOut, Music, BarChart3, RefreshCw } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { cn, getRoleLabel, getRoleColor, getInitials } from '@/lib/utils'
 
@@ -19,7 +19,6 @@ export default function Sidebar() {
   const allNavItems = [
     { href: '/calendar', icon: Calendar, label: 'カレンダー' },
     { href: '/lesson-count', icon: BarChart3, label: `${currentUser.name}さんのレッスン回数` },
-    { href: '/activity', icon: ClipboardList, label: '操作ログ' },
     ...(isTeacher ? [{ href: '/settings', icon: Settings, label: '設定' }] : []),
   ]
 
