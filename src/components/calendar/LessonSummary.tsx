@@ -7,7 +7,7 @@ import { Music } from 'lucide-react'
 import Link from 'next/link'
 
 export default function LessonSummary() {
-  const { state, getUserById: getU } = useApp()
+  const { state, getUserById: getU, getDaySettings } = useApp()
   const { lessons, users } = state
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null)
 
@@ -16,7 +16,10 @@ export default function LessonSummary() {
   if (!teacherId) return null
 
   const relevantLessons = lessons.filter(
-    (l) => l.teacherId === teacherId && (l.status === 'confirmed' || l.status === 'pending')
+    (l) =>
+      l.teacherId === teacherId &&
+      (l.status === 'confirmed' || l.status === 'pending') &&
+      getDaySettings(l.date).isLessonDay
   ) as LessonSlot[]
 
   const counts = students.map((student) => {
@@ -38,7 +41,9 @@ export default function LessonSummary() {
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
       <div className="px-5 py-3 border-b border-gray-100">
         <h2 className="text-sm font-semibold text-gray-900">受講状況サマリー</h2>
-        <p className="text-xs text-gray-500 mt-0.5">氏名をタップするとその生徒のレッスン一覧を表示</p>
+        <p className="text-xs text-gray-500 mt-0.5">
+          氏名をタップするとその生徒のレッスン一覧を表示（レッスン実施日のみ集計。実施しない日は含みません）
+        </p>
       </div>
       <div className="p-4 space-y-2">
         {counts.map(({ student, total, individual, withAccompanist }) => (

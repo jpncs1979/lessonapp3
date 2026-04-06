@@ -26,7 +26,7 @@ function formatDateShort(dateStr: string): string {
 }
 
 export default function LessonCountPage() {
-  const { state } = useApp()
+  const { state, getDaySettings } = useApp()
   const { currentUser, lessons } = state
   const [showThisMonthDates, setShowThisMonthDates] = useState(false)
   const [showYearDates, setShowYearDates] = useState(false)
@@ -59,7 +59,12 @@ export default function LessonCountPage() {
   const thisMonth = now.toISOString().slice(0, 7)
   const { start: yearStart, end: yearEnd } = getAcademicYearRange()
 
-  const relevant = lessons.filter((l) => l.status === 'confirmed' || l.status === 'pending')
+  /** 実施しない日（isLessonDay=false）は週間マスターに枠があってもカウントしない */
+  const relevant = lessons.filter(
+    (l) =>
+      (l.status === 'confirmed' || l.status === 'pending') &&
+      getDaySettings(l.date).isLessonDay
+  )
 
   const isStudent = currentUser.role === 'student'
   const isAccompanist = currentUser.role === 'accompanist'
@@ -91,7 +96,9 @@ export default function LessonCountPage() {
   return (
     <div>
       <h1 className="text-xl font-bold text-gray-900 mb-1">{currentUser.name}さんのレッスン回数</h1>
-      <p className="text-sm text-gray-500 mb-6">今月と年度累計の回数です</p>
+      <p className="text-sm text-gray-500 mb-6">
+        今月と年度累計の回数です（レッスン実施日に入った枠のみ。実施しない日はカウントしません）
+      </p>
 
       {isTeacher ? (
         <LessonSummary />
