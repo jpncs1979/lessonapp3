@@ -272,14 +272,14 @@ export default function WeekTimetable({ anchorDate }: WeekTimetableProps) {
                             aria-label={`${m}月${d}日 レッスン実施`}
                             onClick={() => applyLessonDayToggle(ds, !settings.isLessonDay)}
                             className={cn(
-                              'relative w-8 h-4 sm:w-9 sm:h-5 rounded-full transition-colors shrink-0',
+                              'relative inline-flex w-8 h-4 sm:w-9 sm:h-5 rounded-full transition-colors shrink-0',
                               settings.isLessonDay ? 'bg-indigo-600' : 'bg-gray-300'
                             )}
                           >
                             <span
                               className={cn(
-                                'absolute top-0.5 w-3 h-3 sm:w-4 sm:h-4 bg-white rounded-full shadow transition-transform',
-                                settings.isLessonDay ? 'translate-x-3.5 sm:translate-x-4' : 'translate-x-0.5'
+                                'pointer-events-none absolute left-0.5 top-1/2 h-3 w-3 sm:h-4 sm:w-4 -translate-y-1/2 rounded-full bg-white shadow transition-transform duration-200',
+                                settings.isLessonDay ? 'translate-x-4' : 'translate-x-0'
                               )}
                             />
                           </button>
