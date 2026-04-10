@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, Check, Save } from 'lucide-react'
+import { ChevronLeft, Check, Download, Save } from 'lucide-react'
 import { useApp, makeDefaultDaySettings } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import { createSupabaseClient } from '@/lib/supabase/client'
-import { persistState, persistWeeklyMasters } from '@/lib/supabase/sync'
+import { fetchWeeklyMasters, persistState, persistWeeklyMasters } from '@/lib/supabase/sync'
 import { getLessonSlotList } from '@/lib/schedule'
 import { today } from '@/lib/schedule'
 import { WeeklyMaster } from '@/types'
@@ -63,6 +63,7 @@ export default function WeeklyMasterPage() {
 
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [loadingFromServer, setLoadingFromServer] = useState(false)
 
   useEffect(() => {
     const map: Record<string, string> = {}
@@ -122,6 +123,38 @@ export default function WeeklyMasterPage() {
     })
   }
 
+  /** Supabase から週間マスターを読み込み、画面で確認できるようにする（カレンダーはまだ変えない） */
+  const handleLoadFromServer = async () => {
+    const supabase = createSupabaseClient()
+    if (!supabase) {
+      setFeedback({ ok: false, text: 'Supabase が未設定のため読み込めません' })
+      return
+    }
+    setLoadingFromServer(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setFeedback({ ok: false, text: 'ログインセッションがありません。再度ログインしてください' })
+        return
+      }
+      const { data, error } = await fetchWeeklyMasters(supabase)
+      if (error || data == null) {
+        setFeedback({
+          ok: false,
+          text: `読み込みに失敗しました: ${error ? persistErrorMessage(error) : 'データがありません'}`,
+        })
+        return
+      }
+      dispatch({ type: 'REPLACE_WEEKLY_MASTERS', payload: data })
+      setFeedback({
+        ok: true,
+        text: `サーバーから ${data.length} 件読み込みました。内容を確認し、必要なら編集後に「保存」→「カレンダーに反映」の順で反映してください。`,
+      })
+    } finally {
+      setLoadingFromServer(false)
+    }
+  }
+
   /** 週間マスター行だけ Supabase に保存（再ログインで復元されるのはここ） */
   const handleSaveServer = async () => {
     const next = buildMastersFromLocalMap(localMap)
@@ -143,7 +176,7 @@ export default function WeeklyMasterPage() {
         setFeedback({ ok: false, text: `保存に失敗しました: ${error.message}` })
         return
       }
-      setFeedback({ ok: true, text: 'サーバーに保存しました（再ログイン後もこの内容が読み込まれます）' })
+      setFeedback({ ok: true, text: 'Supabase に保存しました。別の環境でも「読み込み」で同じ内容を取得できます。' })
     } finally {
       setSaving(false)
     }
@@ -155,7 +188,10 @@ export default function WeeklyMasterPage() {
     dispatch({ type: 'REPLACE_WEEKLY_MASTERS', payload: next })
     dispatch({ type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS', payload: { effectiveFromDate: today() } })
     setSaveNonce((n) => n + 1)
-    setFeedback({ ok: true, text: 'カレンダーに反映しました。数秒以内にサーバーへ同期されます' })
+    setFeedback({
+      ok: true,
+      text: 'カレンダーに反映しました。レッスン枠の変更は数秒以内に Supabase へ同期されます。',
+    })
   }
 
   return (
@@ -166,39 +202,34 @@ export default function WeeklyMasterPage() {
         </Link>
         <h1 className="text-xl font-bold text-gray-900">週間マスター</h1>
       </div>
-      <p className="text-sm text-gray-500 mb-3">
-        曜日・時間枠ごとに「この時間は誰が受けるか」のテンプレートを設定します。
-        未割り当ては「空き（available）」、不可は「レッスン不可（blocked）」、学生割当は「授業あり（confirmed）」になります。
-      </p>
-      <div className="text-xs text-gray-500 mb-4 p-3 rounded-xl bg-gray-50 border border-gray-100 space-y-1.5">
-        <p>
-          <span className="font-medium text-gray-700">保存の仕組み：</span>
-          週間マスターは Supabase のデータベース（<code className="text-[11px] bg-white px-1 rounded">weekly_masters</code> テーブル）に保存されます。
-          ログインするとサーバーから読み込み、画面に表示されます。
-        </p>
-        <p>
-          <span className="font-medium text-gray-700">「保存」</span>
-          はテンプレートだけをサーバーに書き込みます（その日のカレンダー枠はまだ変えません）。
-          <span className="font-medium text-gray-700">「カレンダーに反映」</span>
-          は今日以降のレッスン枠をテンプレに合わせて作り直し、あわせて全体をサーバーに同期します。
-        </p>
-        <p className="text-amber-800/90">
-          再ログインで内容が戻る・別の状態に見える場合は、「保存」が失敗している（エラー表示）か、別の Supabase プロジェクト／ブラウザプロファイルを見ている可能性があります。
-        </p>
-      </div>
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <Button
           type="button"
           variant="secondary"
           className="gap-1.5"
-          disabled={saving}
+          disabled={loadingFromServer}
+          onClick={() => void handleLoadFromServer()}
+        >
+          <Download size={16} />
+          {loadingFromServer ? '読み込み中…' : '読み込み'}
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          className="gap-1.5"
+          disabled={saving || loadingFromServer}
           onClick={() => void handleSaveServer()}
         >
           <Save size={16} />
-          {saving ? '保存中…' : '保存（サーバー）'}
+          {saving ? '保存中…' : '保存'}
         </Button>
-        <Button type="button" onClick={handleApplyToCalendar} className="gap-1.5">
+        <Button
+          type="button"
+          disabled={loadingFromServer}
+          onClick={handleApplyToCalendar}
+          className="gap-1.5"
+        >
           <Check size={16} />
           カレンダーに反映
         </Button>

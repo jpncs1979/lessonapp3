@@ -324,6 +324,24 @@ export async function signOutSupabase(
   await supabase.auth.signOut()
 }
 
+/** 週間マスターだけを Supabase から取得（設定画面の「読み込み」用） */
+export async function fetchWeeklyMasters(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
+): Promise<{ data: WeeklyMaster[] | null; error: Error | null }> {
+  try {
+    const { data, error } = await supabase.from('weekly_masters').select('*')
+    if (error) return { data: null, error: error as unknown as Error }
+    const weekly_masters: WeeklyMaster[] = (data ?? []).map((r: DbWeeklyMaster) => ({
+      day_of_week: r.day_of_week,
+      slot_index: r.slot_index,
+      student_id: r.student_id,
+    }))
+    return { data: weekly_masters, error: null }
+  } catch (e) {
+    return { data: null, error: e instanceof Error ? e : new Error(String(e)) }
+  }
+}
+
 /** 週間マスターだけを Supabase に保存（全件削除→再挿入） */
 export async function persistWeeklyMasters(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
