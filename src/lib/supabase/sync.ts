@@ -5,6 +5,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppState } from '@/lib/store'
+import { normalizePendingToConfirmed } from '@/lib/utils'
 import type { User, DaySettings, LessonSlot, WeeklyMaster, AccompanistAvailability } from '@/types'
 
 // DB の型（snake_case）
@@ -132,7 +133,11 @@ export async function fetchFullState(
     supabase.from('app_users').select('id, name, role').order('id'),
     supabase.from('day_settings').select('*'),
     supabase.from('lessons').select('*'),
-    supabase.from('weekly_masters').select('*'),
+    supabase
+      .from('weekly_masters')
+      .select('*')
+      .order('day_of_week', { ascending: true })
+      .order('slot_index', { ascending: true }),
     supabase.from('accompanist_availabilities').select('*'),
   ])
 
@@ -155,19 +160,21 @@ export async function fetchFullState(
     isLessonDay: r.is_lesson_day,
   }))
 
-  const lessons: LessonSlot[] = (lessonsRes.data ?? []).map((r: DbLesson) => ({
-    id: r.id,
-    date: r.date,
-    startTime: r.start_time,
-    endTime: r.end_time,
-    roomName: r.room_name,
-    teacherId: r.teacher_id,
-    studentId: r.student_id ?? undefined,
-    accompanistId: r.accompanist_id ?? undefined,
-    status: r.status as LessonSlot['status'],
-    provisionalDeadline: r.provisional_deadline ?? undefined,
-    note: r.note ?? undefined,
-  }))
+  const lessons: LessonSlot[] = normalizePendingToConfirmed(
+    (lessonsRes.data ?? []).map((r: DbLesson) => ({
+      id: r.id,
+      date: r.date,
+      startTime: r.start_time,
+      endTime: r.end_time,
+      roomName: r.room_name,
+      teacherId: r.teacher_id,
+      studentId: r.student_id ?? undefined,
+      accompanistId: r.accompanist_id ?? undefined,
+      status: r.status as LessonSlot['status'],
+      provisionalDeadline: r.provisional_deadline ?? undefined,
+      note: r.note ?? undefined,
+    }))
+  )
 
   const weekly_masters: WeeklyMaster[] = (weeklyRes.data ?? []).map((r: DbWeeklyMaster) => ({
     day_of_week: r.day_of_week,
@@ -328,37 +335,55 @@ export async function signOutSupabase(
 export async function fetchWeeklyMasters(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
 ): Promise<{ data: WeeklyMaster[] | null; error: Error | null }> {
-  try {
-    const { data, error } = await supabase.from('weekly_masters').select('*')
-    if (error) return { data: null, error: error as unknown as Error }
-    const weekly_masters: WeeklyMaster[] = (data ?? []).map((r: DbWeeklyMaster) => ({
+  const mapRows = (data: DbWeeklyMaster[] | null): WeeklyMaster[] =>
+    (data ?? []).map((r: DbWeeklyMaster) => ({
       day_of_week: r.day_of_week,
       slot_index: r.slot_index,
       student_id: r.student_id,
     }))
-    return { data: weekly_masters, error: null }
-  } catch (e) {
-    return { data: null, error: e instanceof Error ? e : new Error(String(e)) }
+
+  let lastError: Error | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 400 * attempt))
+      const { data, error } = await supabase
+        .from('weekly_masters')
+        .select('*')
+        .order('day_of_week', { ascending: true })
+        .order('slot_index', { ascending: true })
+      if (error) {
+        lastError = error as unknown as Error
+        continue
+      }
+      return { data: mapRows(data as DbWeeklyMaster[]), error: null }
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e))
+    }
   }
+  return { data: null, error: lastError }
 }
 
-/** 週間マスターだけを Supabase に保存（全件削除→再挿入） */
+/** 週間マスター書き込みを直列化（保存ボタンと persistState の二重実行を防ぐ） */
+let weeklyMasterWriteLock: Promise<void> = Promise.resolve()
+
+/** 週間マスターだけを Supabase に保存（全件を一度に削除してから再挿入） */
 export async function persistWeeklyMasters(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   rows: WeeklyMaster[]
 ): Promise<{ error: Error | null }> {
+  const prev = weeklyMasterWriteLock
+  let release!: () => void
+  weeklyMasterWriteLock = new Promise<void>((res) => {
+    release = () => res()
+  })
+  await prev
   try {
-    const { data: existingWM } = await supabase.from('weekly_masters').select('day_of_week, slot_index')
-    if (existingWM?.length) {
-      for (const r of existingWM) {
-        const { error: delErr } = await supabase
-          .from('weekly_masters')
-          .delete()
-          .eq('day_of_week', r.day_of_week)
-          .eq('slot_index', r.slot_index)
-        if (delErr) return { error: delErr as unknown as Error }
-      }
-    }
+    const { error: delErr } = await supabase
+      .from('weekly_masters')
+      .delete()
+      .gte('day_of_week', 0)
+      .lte('day_of_week', 6)
+    if (delErr) return { error: delErr as unknown as Error }
     if (rows.length > 0) {
       const insertRows = rows.map((w) => ({
         day_of_week: w.day_of_week,
@@ -371,6 +396,8 @@ export async function persistWeeklyMasters(
     return { error: null }
   } catch (e) {
     return { error: e instanceof Error ? e : new Error(String(e)) }
+  } finally {
+    release()
   }
 }
 

@@ -2,8 +2,8 @@ export type UserRole = 'teacher' | 'student' | 'accompanist'
 
 export type LessonStatus =
   | 'available'    // 先生が公開したレッスン可枠
-  | 'pending'      // 生徒が仮予約（承認待ち）
-  | 'confirmed'    // 先生が承認済み
+  | 'pending'      // 旧データ互換（アプリ上は確定に正規化して扱う）
+  | 'confirmed'    // 生徒が入った予約枠
   | 'break'        // 休憩
   | 'lunch'        // 昼休み
   | 'blocked'      // 先生がブロック

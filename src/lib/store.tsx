@@ -5,7 +5,7 @@ import {
   User, LessonSlot, DaySettings, AccompanistAvailability,
   LessonStatus, EndTimeMode, Student, Accompanist, WeeklyMaster
 } from '@/types'
-import { generateId, calcProvisionalDeadline } from '@/lib/utils'
+import { generateId, normalizePendingToConfirmed } from '@/lib/utils'
 import { today, formatDateToYYYYMMDD, generateTimeItems } from '@/lib/schedule'
 import { createSupabaseClient } from '@/lib/supabase/client'
 import {
@@ -125,7 +125,7 @@ function generateDemoSlots(settings: DaySettings[], today: string): LessonSlot[]
   const tmSettings = settings.find((s) => s.date === tomorrowStr)
   if (tmSettings) {
     const times = ['09:00', '09:45', '10:40']
-    const statuses: LessonStatus[] = ['pending', 'available', 'available']
+    const statuses: LessonStatus[] = ['confirmed', 'available', 'available']
     const studentIds = ['student-4', null, null]
 
     times.forEach((startTime, i) => {
@@ -142,7 +142,6 @@ function generateDemoSlots(settings: DaySettings[], today: string): LessonSlot[]
         teacherId: 'teacher-1',
         studentId: studentIds[i] || undefined,
         status: statuses[i],
-        provisionalDeadline: i === 0 ? calcProvisionalDeadline(24) : undefined,
       })
     })
   }
@@ -200,16 +199,21 @@ function reducer(state: AppState, action: Action): AppState {
     case 'SESSION_RESTORE_DONE':
       return { ...state, sessionRestoreDone: true }
 
-    case 'ADD_LESSON':
-      return { ...state, lessons: [...state.lessons, action.payload] }
+    case 'ADD_LESSON': {
+      const [normalized] = normalizePendingToConfirmed([action.payload])
+      return { ...state, lessons: [...state.lessons, normalized] }
+    }
 
-    case 'UPDATE_LESSON':
+    case 'UPDATE_LESSON': {
       return {
         ...state,
-        lessons: state.lessons.map((l) =>
-          l.id === action.payload.id ? { ...l, ...action.payload } : l
+        lessons: normalizePendingToConfirmed(
+          state.lessons.map((l) =>
+            l.id === action.payload.id ? ({ ...l, ...action.payload } as LessonSlot) : l
+          )
         ),
       }
+    }
 
     case 'DELETE_LESSON':
       return { ...state, lessons: state.lessons.filter((l) => l.id !== action.payload) }
@@ -281,8 +285,14 @@ function reducer(state: AppState, action: Action): AppState {
         }),
       }
 
-    case 'LOAD_STATE':
-      return { ...action.payload, sessionRestoreDone: (action.payload as AppState).sessionRestoreDone ?? state.sessionRestoreDone }
+    case 'LOAD_STATE': {
+      const p = action.payload
+      return {
+        ...p,
+        lessons: normalizePendingToConfirmed(p.lessons ?? []),
+        sessionRestoreDone: p.sessionRestoreDone ?? state.sessionRestoreDone,
+      }
+    }
 
     case 'MERGE_REMOTE_STATE': {
       const p = action.payload
@@ -302,8 +312,12 @@ function reducer(state: AppState, action: Action): AppState {
               mergedLessons!.push(local)
             } else {
               const onServer = mergedLessons![idx]
-              if (onServer.status === 'available' && (local.status === 'confirmed' || local.status === 'pending')) {
-                mergedLessons![idx] = local
+              if (
+                onServer.status === 'available' &&
+                local.studentId &&
+                (local.status === 'confirmed' || local.status === 'pending')
+              ) {
+                mergedLessons![idx] = normalizePendingToConfirmed([local])[0]
               }
             }
           }
@@ -315,7 +329,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...(p.students != null && { students: p.students }),
         ...(p.accompanists != null && { accompanists: p.accompanists }),
         ...(p.daySettings != null && { daySettings: p.daySettings }),
-        ...(mergedLessons != null && { lessons: mergedLessons }),
+        ...(mergedLessons != null && { lessons: normalizePendingToConfirmed(mergedLessons) }),
         ...(p.weekly_masters != null && { weekly_masters: p.weekly_masters }),
         ...(p.accompanistAvailabilities != null && { accompanistAvailabilities: p.accompanistAvailabilities }),
       }
@@ -528,7 +542,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     accompanists: initialAccompanists,
     weekly_masters: [],
     daySettings: demoSettings,
-    lessons: demoSlots,
+    lessons: normalizePendingToConfirmed(demoSlots),
     accompanistAvailabilities: [
       { id: 'av-1', slotId: `${todayStr}-0900`, accompanistId: 'accompanist-1', createdAt: new Date().toISOString() },
       {

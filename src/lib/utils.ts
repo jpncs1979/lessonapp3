@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import type { LessonSlot } from '@/types'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -9,10 +10,19 @@ export function generateId(): string {
   return Math.random().toString(36).substring(2, 10) + Date.now().toString(36)
 }
 
+/** DB に残っている pending を、生徒付き枠は確定として扱う */
+export function normalizePendingToConfirmed(lessons: LessonSlot[]): LessonSlot[] {
+  return lessons.map((l) =>
+    l.studentId && l.status === 'pending'
+      ? { ...l, status: 'confirmed', provisionalDeadline: undefined }
+      : l
+  )
+}
+
 export function getStatusLabel(status: string): string {
   const labels: Record<string, string> = {
     available: 'レッスン可',
-    pending: '承認待ち',
+    pending: '予約済み',
     confirmed: '確定',
     break: '休憩',
     lunch: '昼休み',

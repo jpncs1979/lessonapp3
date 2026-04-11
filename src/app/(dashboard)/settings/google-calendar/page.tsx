@@ -142,7 +142,7 @@ export default function GoogleCalendarSettingsPage() {
       </div>
       <h1 className="text-xl font-bold text-gray-900 mb-1">Google カレンダー同期</h1>
       <p className="text-sm text-gray-500 mb-6">
-        確定・承認待ちのレッスン（生徒が紐づいている枠）を、お使いの Google カレンダーに反映します。
+        予約済みのレッスン（生徒が紐づいている枠）を、お使いの Google カレンダーに反映します。
       </p>
 
       {noSupabase && (

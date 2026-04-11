@@ -230,10 +230,12 @@ export default function MonthCalendar() {
       if (!isLessonDay) return { kind: 'dash' }
       const myLessons = lessons.filter((l) => (l.status === 'confirmed' || l.status === 'pending') && l.studentId === currentUser.id)
       if (myLessons.length > 0) {
+        const first = [...myLessons].sort((a, b) => a.startTime.localeCompare(b.startTime))[0]
+        const text = first.startTime.slice(0, 5)
         return {
           kind: 'pill',
-          text: 'レッスン',
-          className: 'text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium',
+          text,
+          className: 'text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-medium tabular-nums',
         }
       }
       const available = dayInfo!.available ?? 0
@@ -325,7 +327,7 @@ export default function MonthCalendar() {
         </div>
       )}
 
-      {/* 生徒：マーカー凡例（セル内は ー / 丸／「レッスン」バッジ） */}
+      {/* 生徒：マーカー凡例（セル内は ー / 丸／開始時刻バッジ） */}
       {currentUser?.role === 'student' && (
         <div className="px-3 py-1.5 border-b border-gray-100 bg-gray-50/40 text-[10px] text-gray-500 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
           <span className="inline-flex items-center gap-1">

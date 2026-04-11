@@ -158,7 +158,6 @@ export default function WeeklyMasterPage() {
   /** 週間マスター行だけ Supabase に保存（再ログインで復元されるのはここ） */
   const handleSaveServer = async () => {
     const next = buildMastersFromLocalMap(localMap)
-    dispatch({ type: 'REPLACE_WEEKLY_MASTERS', payload: next })
     const supabase = createSupabaseClient()
     if (!supabase) {
       setFeedback({ ok: false, text: 'Supabase が未設定のため保存できません' })
@@ -176,6 +175,7 @@ export default function WeeklyMasterPage() {
         setFeedback({ ok: false, text: `保存に失敗しました: ${error.message}` })
         return
       }
+      dispatch({ type: 'REPLACE_WEEKLY_MASTERS', payload: next })
       setFeedback({ ok: true, text: 'Supabase に保存しました。別の環境でも「読み込み」で同じ内容を取得できます。' })
     } finally {
       setSaving(false)

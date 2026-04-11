@@ -2,7 +2,7 @@ import { google } from 'googleapis'
 import { OAuth2Client } from 'google-auth-library'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { LessonSlot } from '@/types'
-import { getStatusLabel } from '@/lib/utils'
+import { normalizePendingToConfirmed } from '@/lib/utils'
 
 type DbLesson = {
   id: string
@@ -21,8 +21,7 @@ type MappingRow = { lesson_id: string; google_event_id: string; calendar_id: str
 
 function shouldSyncLesson(l: LessonSlot): boolean {
   if (!l.studentId) return false
-  if (l.status !== 'confirmed' && l.status !== 'pending') return false
-  return true
+  return l.status === 'confirmed'
 }
 
 function toLessonSlot(r: DbLesson): LessonSlot {
@@ -53,14 +52,11 @@ function buildSummary(
 ): string {
   const st = names.student ?? '生徒'
   const acc = lesson.accompanistId ? `（伴奏: ${names.accompanist ?? '伴奏者'}）` : ''
-  return `レッスン: ${st}${acc} [${getStatusLabel(lesson.status)}]`
+  return `${st}${acc}`
 }
 
 function buildDescription(lesson: LessonSlot): string {
-  const lines = [
-    `教室: ${lesson.roomName}`,
-    `状態: ${getStatusLabel(lesson.status)}`,
-  ]
+  const lines = [`教室: ${lesson.roomName}`]
   if (lesson.note) lines.push(`メモ: ${lesson.note}`)
   lines.push('', '（レッスンアプリから同期）')
   return lines.join('\n')
@@ -104,7 +100,9 @@ export async function syncLessonsToGoogleCalendar(params: {
     return { created: 0, updated: 0, deleted: 0, errors: [lessonsError.message] }
   }
 
-  const lessons = (lessonRows ?? []).map((r) => toLessonSlot(r as DbLesson)).filter(shouldSyncLesson)
+  const lessons = normalizePendingToConfirmed(
+    (lessonRows ?? []).map((r) => toLessonSlot(r as DbLesson))
+  ).filter(shouldSyncLesson)
 
   const { data: mapRows, error: mapErr } = await supabase
     .from('lesson_google_calendar_events')

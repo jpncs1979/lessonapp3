@@ -177,7 +177,10 @@ export default function WeekTimetable({ anchorDate }: WeekTimetableProps) {
     const acc = getUserById(slot.accompanistId)
     if (slot.status === 'available') return '空'
     if (slot.status === 'blocked') return '不可'
-    if (slot.status === 'pending') return student ? `${student.name.slice(0, 4)}…` : '仮'
+    if (slot.status === 'pending') {
+      if (student) return student.name.length > 5 ? `${student.name.slice(0, 4)}…` : student.name
+      return '—'
+    }
     if (slot.status === 'confirmed') {
       if (acc && student) return `${student.name.slice(0, 3)}…`
       if (student) return student.name.length > 5 ? `${student.name.slice(0, 4)}…` : student.name

@@ -57,7 +57,7 @@ export default function SettingsPage() {
           </div>
           <div>
             <p className="text-sm font-semibold text-gray-900">Google カレンダー同期</p>
-            <p className="text-xs text-gray-500">OAuth で連携し、確定・承認待ちのレッスンを反映</p>
+            <p className="text-xs text-gray-500">OAuth で連携し、予約済みのレッスンを反映</p>
           </div>
         </Link>
       </div>
