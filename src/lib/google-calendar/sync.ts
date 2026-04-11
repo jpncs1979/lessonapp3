@@ -4,6 +4,39 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { LessonSlot } from '@/types'
 import { normalizePendingToConfirmed } from '@/lib/utils'
 
+/** Calendar API は「ユーザーあたり1分のクエリ数」制限があるため、呼び出しの間隔を空ける */
+const GOOGLE_CALENDAR_MIN_INTERVAL_MS = Math.max(
+  400,
+  Number(process.env.GOOGLE_CALENDAR_SYNC_INTERVAL_MS) || 700
+)
+
+let lastGoogleCalendarApiAt = 0
+
+export async function paceGoogleCalendarApi(): Promise<void> {
+  const now = Date.now()
+  const elapsed = now - lastGoogleCalendarApiAt
+  const wait = Math.max(0, GOOGLE_CALENDAR_MIN_INTERVAL_MS - elapsed)
+  if (wait > 0) {
+    await new Promise((r) => setTimeout(r, wait))
+  }
+  lastGoogleCalendarApiAt = Date.now()
+}
+
+function isGoogleCalendarQuotaError(message: string): boolean {
+  return /quota exceeded|Queries per minute|rateLimitExceeded|userRateLimitExceeded|429/i.test(message)
+}
+
+function dedupeCalendarErrors(errors: string[]): string[] {
+  if (!errors.length) return errors
+  const quotaHits = errors.filter((e) => isGoogleCalendarQuotaError(e))
+  if (quotaHits.length === 0) return errors
+  const rest = errors.filter((e) => !isGoogleCalendarQuotaError(e))
+  return [
+    ...rest,
+    'Google Calendar API の1分あたりの呼び出し上限に達しました。1〜2分待ってから「今すぐ同期」を再度お試しください。',
+  ]
+}
+
 type DbLesson = {
   id: string
   date: string
@@ -136,6 +169,7 @@ export async function syncLessonsToGoogleCalendar(params: {
   for (const [lessonId, map] of [...mappings.entries()]) {
     if (currentIds.has(lessonId)) continue
     try {
+      await paceGoogleCalendarApi()
       await calApi.events.delete({
         calendarId: map.calendar_id || targetCalendarId,
         eventId: map.google_event_id,
@@ -181,6 +215,7 @@ export async function syncLessonsToGoogleCalendar(params: {
     const existing = mappings.get(lesson.id)
     try {
       if (existing) {
+        await paceGoogleCalendarApi()
         await calApi.events.patch({
           calendarId: existing.calendar_id || targetCalendarId,
           eventId: existing.google_event_id,
@@ -188,6 +223,7 @@ export async function syncLessonsToGoogleCalendar(params: {
         })
         result.updated++
       } else {
+        await paceGoogleCalendarApi()
         const inserted = await calApi.events.insert({
           calendarId: targetCalendarId,
           requestBody: body,
@@ -206,6 +242,7 @@ export async function syncLessonsToGoogleCalendar(params: {
         if (insErr) {
           result.errors.push(`DB保存 ${lesson.id}: ${insErr.message}`)
           try {
+            await paceGoogleCalendarApi()
             await calApi.events.delete({ calendarId: targetCalendarId, eventId })
           } catch {
             /* ignore */
@@ -226,6 +263,7 @@ export async function syncLessonsToGoogleCalendar(params: {
     }
   }
 
+  result.errors = dedupeCalendarErrors(result.errors)
   return result
 }
 

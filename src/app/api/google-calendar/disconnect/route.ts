@@ -3,7 +3,7 @@ import { google } from 'googleapis'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { getGoogleClientConfig, getGoogleOAuthRedirectUri } from '@/lib/google-calendar/env'
 import { getTeacherSession } from '@/lib/google-calendar/teacher-session'
-import { createOAuth2ClientForUser } from '@/lib/google-calendar/sync'
+import { createOAuth2ClientForUser, paceGoogleCalendarApi } from '@/lib/google-calendar/sync'
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient()
@@ -42,6 +42,7 @@ export async function POST(request: Request) {
       const calApi = google.calendar({ version: 'v3', auth: oauth2 })
       for (const m of maps ?? []) {
         try {
+          await paceGoogleCalendarApi()
           await calApi.events.delete({
             calendarId: m.calendar_id || 'primary',
             eventId: m.google_event_id,

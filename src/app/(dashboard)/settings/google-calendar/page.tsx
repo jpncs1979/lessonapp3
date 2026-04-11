@@ -260,6 +260,12 @@ export default function GoogleCalendarSettingsPage() {
             を設定する
           </li>
           <li>Supabase にマイグレーション `20250411120000_teacher_google_calendar.sql` を適用する</li>
+          <li>
+            同期件数が多いと Google の「1分あたりのクエリ数」に達することがあります。アプリ側で API
+            呼び出しに間隔を空けています。まだ出る場合は環境変数{' '}
+            <code className="text-[11px] bg-gray-100 px-1 rounded">GOOGLE_CALENDAR_SYNC_INTERVAL_MS</code>
+            （ミリ秒、例: 900）を大きくするか、1〜2分空けて再度「今すぐ同期」してください。
+          </li>
         </ol>
       </div>
     </div>
