@@ -8,6 +8,14 @@ import type { AppState } from '@/lib/store'
 import { normalizePendingToConfirmed } from '@/lib/utils'
 import type { User, DaySettings, LessonSlot, WeeklyMaster, AccompanistAvailability } from '@/types'
 
+export type LoginHistoryRow = {
+  app_user_id: string
+  name: string
+  role: User['role']
+  email: string | null
+  last_sign_in_at: string | null
+}
+
 // DB の型（snake_case）
 type DbAppUser = { id: string; name: string; role: string }
 type DbDaySettings = {
@@ -253,6 +261,18 @@ export async function fetchUnregisteredUsers(
     email: '',
     role: r.role as User['role'],
   }))
+}
+
+/** 先生向け: 全ユーザー（先生・生徒・伴奏者）の最終ログイン時刻を取得 */
+export async function fetchAllLoginHistory(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
+): Promise<{ data: LoginHistoryRow[]; error: Error | null }> {
+  const { data, error } = await supabase.rpc('get_all_login_history_for_teacher')
+  if (error) return { data: [], error: error as unknown as Error }
+  return {
+    data: (data as LoginHistoryRow[] | null) ?? [],
+    error: null,
+  }
 }
 
 /** 登録済みか（auth_profiles に app_user_id があるか）。未ログインでも RPC で判定可能 */

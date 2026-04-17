@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Users, UserPlus, CalendarDays, CalendarSync } from 'lucide-react'
+import { Users, UserPlus, CalendarDays, CalendarSync, History } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { getTeacherGroupLabel } from '@/lib/utils'
 
@@ -58,6 +58,18 @@ export default function SettingsPage() {
           <div>
             <p className="text-sm font-semibold text-gray-900">Google カレンダー同期</p>
             <p className="text-xs text-gray-500">OAuth で連携し、予約済みのレッスンを反映</p>
+          </div>
+        </Link>
+        <Link
+          href="/settings/login-history"
+          className="flex items-center gap-3 p-4 bg-white rounded-2xl border border-gray-100 shadow-sm hover:bg-gray-50 transition-colors sm:col-span-2"
+        >
+          <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+            <History size={20} className="text-emerald-700" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-900">ログイン履歴</p>
+            <p className="text-xs text-gray-500">先生・生徒・伴奏者の最終ログイン時刻を確認</p>
           </div>
         </Link>
       </div>
