@@ -350,6 +350,11 @@ function TimeSlotRow({
 
   const student = getUserById(slot.studentId)
   const accompanist = getUserById(slot.accompanistId)
+  const orphanBooked =
+    (slot.status === 'confirmed' || slot.status === 'pending') &&
+    Boolean(slot.studentId || slot.accompanistId) &&
+    !student &&
+    !accompanist
   const availabilities = getAvailabilitiesForSlot(slot.id)
   const myAvailability = availabilities.find((a) => a.accompanistId === currentUserId)
   const isMyLesson = slot.studentId === currentUserId
@@ -402,7 +407,12 @@ function TimeSlotRow({
           (clickable || studentTapForIndividual || studentTapToCancel) && 'cursor-pointer',
           slot.status === 'available' && !isAccompanistMarkedAvailable && 'bg-white border-gray-300 hover:bg-gray-50',
           isAccompanistMarkedAvailable && 'bg-white border-red-300 hover:bg-gray-50',
-          (slot.status === 'confirmed' || slot.status === 'pending') && !(isStudent && isMyLesson) && !isAccompanistMyLesson && 'bg-blue-100 border-blue-300',
+          orphanBooked && 'bg-white border-gray-300 hover:bg-gray-50',
+          (slot.status === 'confirmed' || slot.status === 'pending') &&
+            !orphanBooked &&
+            !(isStudent && isMyLesson) &&
+            !isAccompanistMyLesson &&
+            'bg-blue-100 border-blue-300',
           ((slot.status === 'confirmed' || slot.status === 'pending') && (isStudent && isMyLesson || isAccompanistMyLesson)) && 'bg-red-50 border-red-300',
           slot.status === 'blocked' && 'bg-gray-200 border-gray-300',
         )}
@@ -421,7 +431,8 @@ function TimeSlotRow({
             {getUserById(currentUserId)?.name}（未定）
           </p>
         )}
-        {(slot.status === 'confirmed' || slot.status === 'pending') && (student || accompanist) && (
+        {orphanBooked && <p className="text-sm font-medium text-gray-700 mt-1">空き</p>}
+        {(slot.status === 'confirmed' || slot.status === 'pending') && !orphanBooked && (student || accompanist) && (
           <div className="mt-1">
             {isAccompanistMyLesson ? (
               <p className="text-sm text-gray-900">

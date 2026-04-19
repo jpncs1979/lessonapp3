@@ -175,8 +175,15 @@ export default function WeekTimetable({ anchorDate }: WeekTimetableProps) {
   const compactCellLabel = (slot: LessonSlot): string => {
     const student = getUserById(slot.studentId)
     const acc = getUserById(slot.accompanistId)
+    const orphanBooked =
+      (slot.status === 'confirmed' || slot.status === 'pending') &&
+      Boolean(slot.studentId || slot.accompanistId) &&
+      !student &&
+      !acc
+
     if (slot.status === 'available') return '空'
     if (slot.status === 'blocked') return '不可'
+    if (orphanBooked) return '空'
     if (slot.status === 'pending') {
       if (student) return student.name.length > 5 ? `${student.name.slice(0, 4)}…` : student.name
       return '—'
@@ -192,6 +199,16 @@ export default function WeekTimetable({ anchorDate }: WeekTimetableProps) {
   const cellClass = (slot: LessonSlot | undefined, hasDay: boolean) => {
     if (!hasDay) return 'bg-gray-100 text-gray-300'
     if (!slot) return 'bg-gray-50 text-gray-300'
+    const student = getUserById(slot.studentId)
+    const acc = getUserById(slot.accompanistId)
+    const orphanBooked =
+      (slot.status === 'confirmed' || slot.status === 'pending') &&
+      Boolean(slot.studentId || slot.accompanistId) &&
+      !student &&
+      !acc
+    if (orphanBooked) {
+      return cn('border border-gray-200', 'bg-white text-gray-800')
+    }
     return cn(
       'border border-gray-200',
       slot.status === 'available' && 'bg-white text-gray-800',

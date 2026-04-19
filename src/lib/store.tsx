@@ -190,7 +190,73 @@ type Action =
   | { type: 'UPDATE_USER_EMAIL'; payload: { id: string; email: string } }
   | { type: 'SESSION_RESTORE_DONE' }
 
-function reducer(state: AppState, action: Action): AppState {
+/** 名簿にいない生徒・伴奏者 ID がレッスン・週間マスター・可能枠に残らないようにする（表示の「—」・青枠の原因になる） */
+function sanitizeRosterReferences(state: AppState): AppState {
+  const BLOCKED_STUDENT_ID = '__blocked__'
+  const validStudentIds = new Set<string>()
+  for (const s of state.students) validStudentIds.add(s.id)
+  for (const u of state.users) {
+    if (u.role === 'student') validStudentIds.add(u.id)
+  }
+  if (state.currentUser?.role === 'student') {
+    validStudentIds.add(state.currentUser.id)
+  }
+  const validAccompanistIds = new Set<string>()
+  for (const a of state.accompanists) validAccompanistIds.add(a.id)
+  for (const u of state.users) {
+    if (u.role === 'accompanist') validAccompanistIds.add(u.id)
+  }
+  if (state.currentUser?.role === 'accompanist') {
+    validAccompanistIds.add(state.currentUser.id)
+  }
+
+  let lessonsChanged = false
+  const lessons = state.lessons.map((l) => {
+    if (l.status === 'break' || l.status === 'lunch') return l
+    const badStudent = l.studentId != null && !validStudentIds.has(l.studentId)
+    const badAcc = l.accompanistId != null && !validAccompanistIds.has(l.accompanistId)
+    if (!badStudent && !badAcc) return l
+    lessonsChanged = true
+    if (l.status === 'blocked') {
+      return {
+        ...l,
+        studentId: undefined,
+        accompanistId: undefined,
+        provisionalDeadline: undefined,
+        note: undefined,
+      }
+    }
+    return {
+      ...l,
+      status: 'available' as const,
+      studentId: undefined,
+      accompanistId: undefined,
+      provisionalDeadline: undefined,
+      note: undefined,
+    }
+  })
+
+  const weekly_masters = state.weekly_masters.filter(
+    (w) => w.student_id === BLOCKED_STUDENT_ID || validStudentIds.has(w.student_id)
+  )
+  const wmChanged = weekly_masters.length !== state.weekly_masters.length
+
+  const accompanistAvailabilities = state.accompanistAvailabilities.filter((a) =>
+    validAccompanistIds.has(a.accompanistId)
+  )
+  const avChanged = accompanistAvailabilities.length !== state.accompanistAvailabilities.length
+
+  if (!lessonsChanged && !wmChanged && !avChanged) return state
+
+  return {
+    ...state,
+    lessons: lessonsChanged ? normalizePendingToConfirmed(lessons) : state.lessons,
+    weekly_masters: wmChanged ? weekly_masters : state.weekly_masters,
+    accompanistAvailabilities: avChanged ? accompanistAvailabilities : state.accompanistAvailabilities,
+  }
+}
+
+function reduceState(state: AppState, action: Action): AppState {
   switch (action.type) {
     case 'LOGIN':
       return { ...state, currentUser: action.payload }
@@ -355,12 +421,20 @@ function reducer(state: AppState, action: Action): AppState {
     case 'DELETE_STUDENT': {
       const next = state.students.filter((s) => s.id !== action.payload)
       const users = state.users.filter((u) => u.id !== action.payload)
+      const weekly_masters = state.weekly_masters.filter((w) => w.student_id !== action.payload)
       const lessons = state.lessons.map((l) =>
         l.studentId === action.payload
-          ? { ...l, status: 'available' as const, studentId: undefined, accompanistId: undefined, provisionalDeadline: undefined }
+          ? {
+              ...l,
+              status: 'available' as const,
+              studentId: undefined,
+              accompanistId: undefined,
+              provisionalDeadline: undefined,
+              note: undefined,
+            }
           : l
       )
-      return { ...state, students: next, users, lessons }
+      return { ...state, students: next, users, weekly_masters, lessons }
     }
     case 'ADD_ACCOMPANIST': {
       const next = [...state.accompanists, action.payload]
@@ -384,7 +458,14 @@ function reducer(state: AppState, action: Action): AppState {
       const users = state.users.filter((u) => u.id !== action.payload)
       const lessons = state.lessons.map((l) =>
         l.accompanistId === action.payload
-          ? { ...l, status: 'available' as const, studentId: undefined, accompanistId: undefined, provisionalDeadline: undefined }
+          ? {
+              ...l,
+              status: 'available' as const,
+              studentId: undefined,
+              accompanistId: undefined,
+              provisionalDeadline: undefined,
+              note: undefined,
+            }
           : l
       )
       const accompanistAvailabilities = state.accompanistAvailabilities.filter(
@@ -505,6 +586,10 @@ function reducer(state: AppState, action: Action): AppState {
     default:
       return state
   }
+}
+
+function reducer(state: AppState, action: Action): AppState {
+  return sanitizeRosterReferences(reduceState(state, action))
 }
 
 // ─── Context ───────────────────────────────────────────────────────
