@@ -672,6 +672,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState)
   const hasRestoredRef = React.useRef(false)
   const skipPersistRef = useRef(false)
+  /** 初回のサーバー取得が成功するまで Supabase への永続化を禁止（取得失敗や空マージで DB を空にしない） */
+  const suppressPersistUntilRemoteFetchRef = useRef(false)
   const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const supabaseRef = useRef(createSupabaseClient())
 
@@ -707,22 +709,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!mounted) return
         if (appUser) {
           try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
+          suppressPersistUntilRemoteFetchRef.current = true
           dispatch({ type: 'LOGIN', payload: appUser })
           skipPersistRef.current = true
           try {
             const full = await fetchFullState(supabase)
-            if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
-          } catch {
-            if (mounted) {
-              dispatch({
-                type: 'MERGE_REMOTE_STATE',
-                payload: {
-                  lessons: [],
-                  daySettings: [],
-                  accompanistAvailabilities: [],
-                },
-              })
+            if (mounted && full) {
+              dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+              suppressPersistUntilRemoteFetchRef.current = false
             }
+          } catch {
+            /* 空マージしない。suppress のままなので DB への誤保存もしない */
           }
         } else {
           try {
@@ -731,10 +728,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
               const parsed = JSON.parse(raw) as { id: string; name: string; role: string }
               if (parsed?.id && parsed?.name && (parsed.role === 'student' || parsed.role === 'accompanist')) {
                 const nameOnlyUser: User = { id: parsed.id, name: parsed.name, email: '', role: parsed.role as User['role'] }
+                suppressPersistUntilRemoteFetchRef.current = true
                 dispatch({ type: 'LOGIN', payload: nameOnlyUser })
                 skipPersistRef.current = true
-                const full = await fetchFullState(supabase)
-                if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+                try {
+                  const full = await fetchFullState(supabase)
+                  if (mounted && full) {
+                    dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+                    suppressPersistUntilRemoteFetchRef.current = false
+                  }
+                } catch {
+                  /* 同上 */
+                }
                 clearTimeout(timeoutId)
                 done()
                 return
@@ -769,22 +774,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           try { localStorage.removeItem(NAME_ONLY_USER_KEY) } catch { /* ignore */ }
           const appUser = await getAppUserByAuthUid(supabase, session.user.id)
           if (appUser) {
+            suppressPersistUntilRemoteFetchRef.current = true
             dispatch({ type: 'LOGIN', payload: appUser })
             skipPersistRef.current = true
             try {
               const full = await fetchFullState(supabase)
-              if (mounted && full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
-            } catch {
-              if (mounted) {
-                dispatch({
-                  type: 'MERGE_REMOTE_STATE',
-                  payload: {
-                    lessons: [],
-                    daySettings: [],
-                    accompanistAvailabilities: [],
-                  },
-                })
+              if (mounted && full) {
+                dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+                suppressPersistUntilRemoteFetchRef.current = false
               }
+            } catch {
+              /* 空マージしない */
             }
           }
         } catch (e) {
@@ -834,6 +834,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const supabase = supabaseRef.current
     if (!supabase || !state.currentUser || !hasRestoredRef.current) return
+    if (suppressPersistUntilRemoteFetchRef.current) return
     if (skipPersistRef.current) {
       skipPersistRef.current = false
       return
@@ -843,6 +844,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const delayMs = isNameOnly ? 400 : 1500
     persistTimeoutRef.current = setTimeout(async () => {
       persistTimeoutRef.current = null
+      if (suppressPersistUntilRemoteFetchRef.current) return
       const { data: { session } } = await supabase.auth.getSession()
       if (session) {
         await persistState(supabase, state)
@@ -860,10 +862,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const supabase = supabaseRef.current
     if (!supabase || state.currentUser?.role !== 'accompanist' || !hasRestoredRef.current) return
+    if (suppressPersistUntilRemoteFetchRef.current) return
     const accompanistId = state.currentUser.id
     if (accompanistAvailTimeoutRef.current) clearTimeout(accompanistAvailTimeoutRef.current)
     accompanistAvailTimeoutRef.current = setTimeout(async () => {
       accompanistAvailTimeoutRef.current = null
+      if (suppressPersistUntilRemoteFetchRef.current) return
       const slotIds = state.accompanistAvailabilities
         .filter((a) => a.accompanistId === accompanistId)
         .map((a) => a.slotId)
@@ -892,6 +896,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const full = await fetchFullStateWithTimeout(supabase)
       skipPersistRef.current = true
       dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+      suppressPersistUntilRemoteFetchRef.current = false
       return { ok: true }
     } catch (e) {
       return {

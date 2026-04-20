@@ -133,6 +133,15 @@ export async function fetchAppUsers(
   }))
 }
 
+function formatSupabaseQueryErrors(
+  parts: { label: string; error: { message: string } | null }[]
+): string {
+  return parts
+    .filter((p) => p.error)
+    .map((p) => `${p.label}: ${p.error!.message}`)
+    .join(' / ')
+}
+
 /** ログイン済み時に全データを取得 */
 export async function fetchFullState(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>
@@ -148,6 +157,15 @@ export async function fetchFullState(
       .order('slot_index', { ascending: true }),
     supabase.from('accompanist_availabilities').select('*'),
   ])
+
+  const criticalErr = formatSupabaseQueryErrors([
+    { label: 'app_users', error: usersRes.error },
+    { label: 'day_settings', error: dayRes.error },
+    { label: 'lessons', error: lessonsRes.error },
+  ])
+  if (criticalErr) {
+    throw new Error(`サーバーからの取得に失敗しました（${criticalErr}）`)
+  }
 
   const users: AppState['users'] = (usersRes.data ?? []).map((r: DbAppUser) => ({
     id: r.id,
@@ -205,7 +223,7 @@ export async function fetchFullState(
     daySettings,
     lessons,
     ...(weeklyRes.error ? {} : { weekly_masters }),
-    accompanistAvailabilities,
+    ...(availRes.error ? {} : { accompanistAvailabilities }),
   }
 }
 
@@ -271,6 +289,34 @@ export async function fetchAllLoginHistory(
   if (error) return { data: [], error: error as unknown as Error }
   return {
     data: (data as LoginHistoryRow[] | null) ?? [],
+    error: null,
+  }
+}
+
+export type LessonChangeLogRow = {
+  id: number
+  occurred_at: string
+  op: 'INSERT' | 'UPDATE' | 'DELETE'
+  lesson_id: string
+  old_row: Record<string, unknown> | null
+  new_row: Record<string, unknown> | null
+  auth_uid: string | null
+  actor_app_user_id: string | null
+  actor_name: string | null
+  actor_email: string | null
+}
+
+/** 先生向け: lessons テーブルへの変更履歴（DB トリガー記録） */
+export async function fetchLessonChangeLog(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  limit = 500
+): Promise<{ data: LessonChangeLogRow[]; error: Error | null }> {
+  const { data, error } = await supabase.rpc('get_lesson_change_log_for_teacher', {
+    p_limit: limit,
+  })
+  if (error) return { data: [], error: error as unknown as Error }
+  return {
+    data: (data as LessonChangeLogRow[] | null) ?? [],
     error: null,
   }
 }

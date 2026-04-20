@@ -11,6 +11,18 @@ export function timeToMinutes(time: string): number {
   return h * 60 + m
 }
 
+/** 枠の終了時刻が現在より前なら「実施済み」とみなす（ローカル日時） */
+export function isLessonSlotEnded(slot: LessonSlot, now: Date = new Date()): boolean {
+  const parts = slot.date.split('-').map(Number)
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return false
+  const [y, mo, d] = parts
+  const endMin = timeToMinutes(slot.endTime)
+  const eh = Math.floor(endMin / 60)
+  const em = endMin % 60
+  const end = new Date(y, mo - 1, d, eh, em, 0, 0)
+  return end.getTime() < now.getTime()
+}
+
 export function minutesToTime(minutes: number): string {
   const h = Math.floor(minutes / 60)
   const m = minutes % 60

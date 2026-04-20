@@ -79,7 +79,6 @@ export default function EnterPage() {
 
   const handleEnterClick = async () => {
     if (!selectedUser) return
-    dispatch({ type: 'LOGIN', payload: selectedUser })
     try {
       localStorage.setItem(NAME_ONLY_USER_KEY, JSON.stringify({
         id: selectedUser.id,
@@ -88,8 +87,16 @@ export default function EnterPage() {
       }))
     } catch { /* ignore */ }
     if (supabase) {
-      const full = await fetchFullState(supabase)
-      if (full) dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+      try {
+        const full = await fetchFullState(supabase)
+        dispatch({ type: 'LOGIN', payload: selectedUser })
+        dispatch({ type: 'MERGE_REMOTE_STATE', payload: full })
+      } catch {
+        alert('サーバーからスケジュールを取得できませんでした。通信や設定を確認してから再度お試しください。')
+        return
+      }
+    } else {
+      dispatch({ type: 'LOGIN', payload: selectedUser })
     }
     router.push('/calendar')
   }

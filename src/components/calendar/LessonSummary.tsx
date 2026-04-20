@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useApp } from '@/lib/store'
 import { LessonSlot } from '@/types'
+import { isLessonSlotEnded } from '@/lib/schedule'
 import { Music } from 'lucide-react'
 import Link from 'next/link'
 
@@ -24,13 +25,21 @@ export default function LessonSummary() {
 
   const counts = students.map((student) => {
     const myLessons = relevantLessons.filter((l) => l.studentId === student.id)
-    const individual = myLessons.filter((l) => !l.accompanistId).length
-    const withAccompanist = myLessons.filter((l) => l.accompanistId).length
+    const planned = myLessons.length
+    const conductedLessons = myLessons.filter((l) => isLessonSlotEnded(l))
+    const conducted = conductedLessons.length
+    const plannedIndividual = myLessons.filter((l) => !l.accompanistId).length
+    const plannedWithAcc = myLessons.filter((l) => l.accompanistId).length
+    const conductedIndividual = conductedLessons.filter((l) => !l.accompanistId).length
+    const conductedWithAcc = conductedLessons.filter((l) => l.accompanistId).length
     return {
       student,
-      total: myLessons.length,
-      individual,
-      withAccompanist,
+      planned,
+      conducted,
+      plannedIndividual,
+      plannedWithAcc,
+      conductedIndividual,
+      conductedWithAcc,
       lessons: myLessons.sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)),
     }
   })
@@ -42,25 +51,45 @@ export default function LessonSummary() {
       <div className="px-5 py-3 border-b border-gray-100">
         <h2 className="text-sm font-semibold text-gray-900">受講状況サマリー</h2>
         <p className="text-xs text-gray-500 mt-0.5">
-          氏名をタップするとその生徒のレッスン一覧を表示（レッスン実施日のみ集計。実施しない日は含みません）
+          氏名をタップするとその生徒のレッスン一覧を表示。予定＝レッスン日の予約枠、実施＝枠の終了時刻を過ぎた予定（実施しない日は集計に含みません）
         </p>
       </div>
       <div className="p-4 space-y-2">
-        {counts.map(({ student, total, individual, withAccompanist }) => (
+        {counts.map(
+          ({
+            student,
+            planned,
+            conducted,
+            plannedIndividual,
+            plannedWithAcc,
+            conductedIndividual,
+            conductedWithAcc,
+          }) => (
           <div
             key={student.id}
-            className="flex items-center justify-between py-2 px-3 rounded-xl bg-gray-50 text-sm"
+            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 py-2 px-3 rounded-xl bg-gray-50 text-sm"
           >
             <button
               type="button"
               onClick={() => setSelectedStudentId(selectedStudentId === student.id ? null : student.id)}
-              className="font-medium text-gray-900 text-left hover:text-indigo-600 hover:underline"
+              className="font-medium text-gray-900 text-left hover:text-indigo-600 hover:underline shrink-0"
             >
               {student.name}
             </button>
-            <span className="text-gray-600">
-              {total}回（個人: {individual} / 伴奏付き: {withAccompanist}）
-            </span>
+            <div className="text-gray-600 text-right sm:text-left space-y-0.5">
+              <p>
+                <span className="text-gray-500">予定</span>{' '}
+                <span className="font-semibold text-gray-900 tabular-nums">{planned}</span>回
+                <span className="mx-1.5 text-gray-300">/</span>
+                <span className="text-gray-500">実施</span>{' '}
+                <span className="font-semibold text-indigo-700 tabular-nums">{conducted}</span>回
+              </p>
+              <p className="text-xs text-gray-500">
+                個人 予定{plannedIndividual}・実施{conductedIndividual}
+                <span className="mx-1.5">·</span>
+                伴奏付き 予定{plannedWithAcc}・実施{conductedWithAcc}
+              </p>
+            </div>
           </div>
         ))}
         {counts.length === 0 && (
@@ -85,7 +114,16 @@ export default function LessonSummary() {
                     >
                       {l.date.replace(/-/g, '/')} {l.startTime}〜{l.endTime}
                     </Link>
-                    <span className="text-gray-500">
+                    <span className="text-gray-500 flex items-center gap-2 shrink-0">
+                      {isLessonSlotEnded(l) ? (
+                        <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                          実施済
+                        </span>
+                      ) : (
+                        <span className="text-xs font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                          予定
+                        </span>
+                      )}
                       {acc ? (
                         <span className="flex items-center gap-1 text-teal-600">
                           <Music size={12} />
