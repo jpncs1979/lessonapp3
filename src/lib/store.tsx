@@ -186,6 +186,7 @@ type Action =
   | { type: 'REMOVE_WEEKLY_MASTER'; payload: { day_of_week: number; slot_index: number } }
   | { type: 'REPLACE_WEEKLY_MASTERS'; payload: WeeklyMaster[] }
   | { type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS'; payload: { effectiveFromDate: string } }
+  | { type: 'DELETE_DATA_BEFORE_DATE'; payload: { cutoffDate: string } }
   | { type: 'GENERATE_LESSONS_FOR_DATE'; payload: { date: string; daySettings: DaySettings; openAsAllAvailable?: boolean } }
   | { type: 'UPDATE_USER_EMAIL'; payload: { id: string; email: string } }
   | { type: 'SESSION_RESTORE_DONE' }
@@ -538,6 +539,20 @@ function reduceState(state: AppState, action: Action): AppState {
       // 対象日付の既存 lessons を全置換
       const remaining = state.lessons.filter((l) => !lessonDatesSet.has(l.date))
       return { ...state, lessons: [...remaining, ...rebuilt] }
+    }
+
+    case 'DELETE_DATA_BEFORE_DATE': {
+      const { cutoffDate } = action.payload
+      const lessons = state.lessons.filter((l) => l.date >= cutoffDate)
+      const remainingSlotIds = new Set(lessons.map((l) => l.id))
+      return {
+        ...state,
+        daySettings: state.daySettings.filter((s) => s.date >= cutoffDate),
+        lessons,
+        accompanistAvailabilities: state.accompanistAvailabilities.filter((a) =>
+          remainingSlotIds.has(a.slotId)
+        ),
+      }
     }
 
     case 'GENERATE_LESSONS_FOR_DATE': {

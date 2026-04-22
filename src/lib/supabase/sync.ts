@@ -42,6 +42,7 @@ type DbLesson = {
 }
 type DbWeeklyMaster = { day_of_week: number; slot_index: number; student_id: string }
 type DbAvailability = { id: string; slot_id: string; accompanist_id: string; created_at: string }
+type DbLessonIdRow = { id: string }
 
 /** リフレッシュトークン無効などでセッションが壊れているとき、ローカルストレージだけクリア（再ログイン可能にする） */
 export async function clearStaleSupabaseSession(
@@ -432,6 +433,63 @@ export async function fetchWeeklyMasters(
 /** 週間マスター書き込みを直列化（保存ボタンと persistState の二重実行を防ぐ） */
 let weeklyMasterWriteLock: Promise<void> = Promise.resolve()
 
+function toDbLessonRow(l: LessonSlot) {
+  return {
+    id: l.id,
+    date: l.date,
+    start_time: l.startTime,
+    end_time: l.endTime,
+    room_name: l.roomName,
+    teacher_id: l.teacherId,
+    student_id: l.studentId ?? null,
+    accompanist_id: l.accompanistId ?? null,
+    status: l.status,
+    provisional_deadline: l.provisionalDeadline ?? null,
+    note: l.note ?? null,
+  }
+}
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  if (arr.length === 0) return []
+  const chunks: T[][] = []
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size))
+  }
+  return chunks
+}
+
+/**
+ * lessons を安全に同期する:
+ * 1) 先に upsert（追加/更新）
+ * 2) その後、入力に存在しない ID だけ削除
+ * これにより「削除は成功したが挿入失敗」で全消失するリスクを避ける
+ */
+async function syncLessonsTable(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  lessons: LessonSlot[]
+): Promise<{ error: Error | null }> {
+  const { data: existingLessons, error: existingErr } = await supabase.from('lessons').select('id')
+  if (existingErr) return { error: existingErr as unknown as Error }
+
+  const rows = lessons.map(toDbLessonRow)
+  const UPSERT_CHUNK_SIZE = 500
+  for (const chunk of chunkArray(rows, UPSERT_CHUNK_SIZE)) {
+    const { error } = await supabase.from('lessons').upsert(chunk, { onConflict: 'id' })
+    if (error) return { error: error as unknown as Error }
+  }
+
+  const existingIds = (existingLessons ?? []).map((r: DbLessonIdRow) => r.id)
+  const nextIds = new Set(rows.map((r) => r.id))
+  const toDelete = existingIds.filter((id) => !nextIds.has(id))
+  const DELETE_CHUNK_SIZE = 500
+  for (const ids of chunkArray(toDelete, DELETE_CHUNK_SIZE)) {
+    const { error: delErr } = await supabase.from('lessons').delete().in('id', ids)
+    if (delErr) return { error: delErr as unknown as Error }
+  }
+
+  return { error: null }
+}
+
 /** 週間マスターだけを Supabase に保存（全件を一度に削除してから再挿入） */
 export async function persistWeeklyMasters(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
@@ -506,29 +564,9 @@ export async function persistState(
       if (error) return { error: error as unknown as Error }
     }
 
-    // lessons: 既存を削除してから挿入
-    const { data: existingLessons } = await supabase.from('lessons').select('id')
-    if (existingLessons?.length) {
-      const { error: delErr } = await supabase.from('lessons').delete().in('id', existingLessons.map((r) => r.id))
-      if (delErr) return { error: delErr as unknown as Error }
-    }
-    if (state.lessons.length > 0) {
-      const rows = state.lessons.map((l) => ({
-        id: l.id,
-        date: l.date,
-        start_time: l.startTime,
-        end_time: l.endTime,
-        room_name: l.roomName,
-        teacher_id: l.teacherId,
-        student_id: l.studentId ?? null,
-        accompanist_id: l.accompanistId ?? null,
-        status: l.status,
-        provisional_deadline: l.provisionalDeadline ?? null,
-        note: l.note ?? null,
-      }))
-      const { error } = await supabase.from('lessons').insert(rows)
-      if (error) return { error: error as unknown as Error }
-    }
+    // lessons: upsert 後に不要 ID のみ削除（全削除→再挿入を廃止）
+    const lessonsSyncResult = await syncLessonsTable(supabase, state.lessons)
+    if (lessonsSyncResult.error) return lessonsSyncResult
 
     const wmErr = await persistWeeklyMasters(supabase, state.weekly_masters)
     if (wmErr.error) return wmErr
@@ -561,29 +599,7 @@ export async function persistLessonsOnly(
   lessons: LessonSlot[]
 ): Promise<{ error: Error | null }> {
   try {
-    const { data: existingLessons } = await supabase.from('lessons').select('id')
-    if (existingLessons?.length) {
-      const { error: delErr } = await supabase.from('lessons').delete().in('id', existingLessons.map((r: { id: string }) => r.id))
-      if (delErr) return { error: delErr as unknown as Error }
-    }
-    if (lessons.length > 0) {
-      const rows = lessons.map((l) => ({
-        id: l.id,
-        date: l.date,
-        start_time: l.startTime,
-        end_time: l.endTime,
-        room_name: l.roomName,
-        teacher_id: l.teacherId,
-        student_id: l.studentId ?? null,
-        accompanist_id: l.accompanistId ?? null,
-        status: l.status,
-        provisional_deadline: l.provisionalDeadline ?? null,
-        note: l.note ?? null,
-      }))
-      const { error } = await supabase.from('lessons').insert(rows)
-      if (error) return { error: error as unknown as Error }
-    }
-    return { error: null }
+    return await syncLessonsTable(supabase, lessons)
   } catch (e) {
     return { error: e instanceof Error ? e : new Error(String(e)) }
   }
