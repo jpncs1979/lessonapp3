@@ -118,12 +118,8 @@ export default function WeekTimetable({ anchorDate }: WeekTimetableProps) {
         return
       }
       if (slot.status === 'available') {
-        const inState = lessons.some((l) => l.id === slot.id)
-        if (inState) {
-          dispatch({ type: 'UPDATE_LESSON', payload: { id: slot.id, status: 'blocked' } })
-        } else {
-          dispatch({ type: 'ADD_LESSON', payload: { ...slot, status: 'blocked' } })
-        }
+        setSelectedSlot(slot)
+        setModalOpen(true)
         return
       }
       setSelectedSlot(slot)

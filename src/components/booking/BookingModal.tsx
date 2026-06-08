@@ -103,6 +103,22 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
     onClose()
   }
 
+  const handleBlock = () => {
+    const inState = state.lessons.some((l) => l.id === slot.id)
+    const blockedPayload = {
+      status: 'blocked' as const,
+      studentId: undefined,
+      accompanistId: undefined,
+      provisionalDeadline: undefined,
+    }
+    if (inState) {
+      dispatch({ type: 'UPDATE_LESSON', payload: { id: slot.id, ...blockedPayload } })
+    } else {
+      dispatch({ type: 'ADD_LESSON', payload: { ...slot, ...blockedPayload } })
+    }
+    onClose()
+  }
+
   const handleTeacherAssign = () => {
     if (!assignStudentId || !currentUser) return
     const otherOnSameDay = lessonsForDate.some(
@@ -296,6 +312,9 @@ export default function BookingModal({ open, onClose, slot }: BookingModalProps)
                 disabled={!assignStudentId}
               >
                 この枠に指定する
+              </Button>
+              <Button variant="secondary" className="w-full" onClick={handleBlock}>
+                不可にする
               </Button>
             </>
           )}

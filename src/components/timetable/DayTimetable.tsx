@@ -28,22 +28,24 @@ export default function DayTimetable({ date }: DayTimetableProps) {
   const isTeacher = currentUser?.role === 'teacher'
   const isAccompanist = currentUser?.role === 'accompanist'
 
+  const dayRoute = (dateStr: string) => `/day/${dateStr}?mode=day`
+
   const prevDate = () => {
     const [y, m, d] = date.split('-').map(Number)
     const dt = new Date(y, m - 1, d)
     dt.setDate(dt.getDate() - 1)
-    router.push(`/day/${formatDateToYYYYMMDD(dt)}`)
+    router.push(dayRoute(formatDateToYYYYMMDD(dt)))
   }
   const nextDate = () => {
     const [y, m, d] = date.split('-').map(Number)
     const dt = new Date(y, m - 1, d)
     dt.setDate(dt.getDate() + 1)
-    router.push(`/day/${formatDateToYYYYMMDD(dt)}`)
+    router.push(dayRoute(formatDateToYYYYMMDD(dt)))
   }
 
   const todayStr = today()
   const goToToday = () => {
-    if (date !== todayStr) router.push(`/day/${todayStr}`)
+    if (date !== todayStr) router.push(dayRoute(todayStr))
   }
 
   // 前日・翌日ルートを事前読み込み → タップ時の遷移を高速化
@@ -51,9 +53,9 @@ export default function DayTimetable({ date }: DayTimetableProps) {
     const [y, m, d] = date.split('-').map(Number)
     const prev = new Date(y, m - 1, d); prev.setDate(prev.getDate() - 1)
     const next = new Date(y, m - 1, d); next.setDate(next.getDate() + 1)
-    router.prefetch(`/day/${formatDateToYYYYMMDD(prev)}`)
-    router.prefetch(`/day/${formatDateToYYYYMMDD(next)}`)
-    router.prefetch(`/day/${todayStr}`)
+    router.prefetch(dayRoute(formatDateToYYYYMMDD(prev)))
+    router.prefetch(dayRoute(formatDateToYYYYMMDD(next)))
+    router.prefetch(dayRoute(todayStr))
   }, [date, router, todayStr])
 
   const handleSlotClick = (slot: LessonSlot) => {
