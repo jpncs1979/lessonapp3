@@ -5,6 +5,10 @@ import Link from 'next/link'
 import { CalendarSync, Link2, Unplug, Loader2 } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import Button from '@/components/ui/Button'
+import {
+  runGoogleCalendarSync,
+  setGoogleCalendarConnectedCache,
+} from '@/lib/google-calendar/client-sync'
 
 type StatusRes = {
   ok: boolean
@@ -29,6 +33,8 @@ export default function GoogleCalendarSettingsPage() {
       const r = await fetch('/api/google-calendar/status', { credentials: 'include' })
       const j = (await r.json()) as StatusRes
       setStatus(j)
+      if (j.connected) setGoogleCalendarConnectedCache(true)
+      else if (j.ok) setGoogleCalendarConnectedCache(false)
     } catch {
       setStatus({ ok: false, connected: false })
     } finally {
@@ -47,7 +53,8 @@ export default function GoogleCalendarSettingsPage() {
     const msg = params.get('msg')
     if (!g) return
     if (g === 'connected') {
-      setToast({ ok: true, text: 'Google カレンダーと連携しました。必要なら「今すぐ同期」を押してください。' })
+      setGoogleCalendarConnectedCache(true)
+      setToast({ ok: true, text: 'Google カレンダーと連携しました。DB保存後に自動同期されます。手動は「今すぐ同期」でも可能です。' })
       void loadStatus()
     } else if (g === 'error') {
       setToast({
@@ -65,38 +72,12 @@ export default function GoogleCalendarSettingsPage() {
     setSyncing(true)
     setToast(null)
     try {
-      const r = await fetch('/api/google-calendar/sync', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      })
-      const j = (await r.json()) as {
-        ok: boolean
-        created?: number
-        updated?: number
-        deleted?: number
-        errors?: string[]
-        error?: string
-      }
-      if (!r.ok || !j.ok) {
-        setToast({ ok: false, text: j.error ?? j.errors?.join(' ') ?? '同期に失敗しました' })
+      const snap = await runGoogleCalendarSync()
+      if (snap.status === 'error' || !snap.ok) {
+        setToast({ ok: false, text: snap.message })
         return
       }
-      const parts = [
-        j.created ? `新規 ${j.created}` : '',
-        j.updated ? `更新 ${j.updated}` : '',
-        j.deleted ? `削除 ${j.deleted}` : '',
-      ].filter(Boolean)
-      const base =
-        parts.length > 0
-          ? `同期しました（${parts.join(' / ')}）`
-          : '同期しました（対象の予定はありませんでした）'
-      if (j.errors?.length) {
-        setToast({ ok: false, text: `${base} — エラー: ${j.errors.join('; ')}` })
-      } else {
-        setToast({ ok: true, text: base })
-      }
+      setToast({ ok: true, text: snap.message })
     } catch (e) {
       setToast({ ok: false, text: e instanceof Error ? e.message : '同期に失敗しました' })
     } finally {
@@ -118,6 +99,7 @@ export default function GoogleCalendarSettingsPage() {
         setToast({ ok: false, text: j.error ?? '解除に失敗しました' })
         return
       }
+      setGoogleCalendarConnectedCache(false)
       setToast({ ok: true, text: '連携を解除しました' })
       await loadStatus()
     } catch (e) {
@@ -143,6 +125,7 @@ export default function GoogleCalendarSettingsPage() {
       <h1 className="text-xl font-bold text-gray-900 mb-1">Google カレンダー同期</h1>
       <p className="text-sm text-gray-500 mb-6">
         予約済みのレッスン（生徒が紐づいている枠）を、お使いの Google カレンダーに反映します。
+        連携済みの場合、サーバー保存の約4秒後に自動同期されます（画面右下に結果が表示されます）。
       </p>
 
       {noSupabase && (

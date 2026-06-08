@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useApp } from '@/lib/store'
 import Sidebar from '@/components/layout/Sidebar'
+import SyncStatusBar from '@/components/layout/SyncStatusBar'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -30,6 +31,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </div>
       </main>
+      <SyncStatusBar />
     </div>
   )
 }

@@ -21,6 +21,22 @@ import {
   clearStaleSupabaseSession,
   isStaleAuthSessionError,
 } from '@/lib/supabase/sync'
+import {
+  fetchGoogleCalendarConnected,
+  getGoogleCalendarConnectedCache,
+  runGoogleCalendarSync,
+  setGoogleCalendarConnectedCache,
+} from '@/lib/google-calendar/client-sync'
+
+export type PersistUiPhase = 'idle' | 'pending' | 'saving' | 'saved' | 'error' | 'local_saved'
+
+export type PersistUiState = {
+  phase: PersistUiPhase
+  savedAt: Date | null
+  errorMessage: string | null
+  googleSync: boolean
+  googleSyncDismissed: boolean
+}
 
 // ─── デモ用初期データ ───────────────────────────────────────────────
 
@@ -612,6 +628,9 @@ function reducer(state: AppState, action: Action): AppState {
 interface AppContextType {
   state: AppState
   dispatch: React.Dispatch<Action>
+  persistUi: PersistUiState
+  dismissPersistSaved: () => void
+  dismissGoogleSync: () => void
   getUserById: (id?: string) => User | undefined
   getDaySettings: (date: string) => DaySettings
   getLessonsForDate: (date: string) => LessonSlot[]
@@ -626,6 +645,18 @@ const AppContext = createContext<AppContextType | null>(null)
 const STORAGE_KEY = 'lessonapp_state'
 /** 生徒・伴奏者が「名前だけで入った」ときの永続化キー（先生は使わない） */
 export const NAME_ONLY_USER_KEY = 'lessonapp_name_only_user'
+
+function getPersistFingerprint(state: AppState): string {
+  return JSON.stringify({
+    lessons: state.lessons,
+    daySettings: state.daySettings,
+    weekly_masters: state.weekly_masters,
+    users: state.users,
+    students: state.students,
+    accompanists: state.accompanists,
+    accompanistAvailabilities: state.accompanistAvailabilities,
+  })
+}
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const todayStr = today()
@@ -685,12 +716,82 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   const [state, dispatch] = useReducer(reducer, initialState)
+  const stateRef = useRef(state)
+  stateRef.current = state
+  const [persistUi, setPersistUi] = React.useState<PersistUiState>({
+    phase: 'idle',
+    savedAt: null,
+    errorMessage: null,
+    googleSync: false,
+    googleSyncDismissed: false,
+  })
   const hasRestoredRef = React.useRef(false)
   const skipPersistRef = useRef(false)
   /** 初回のサーバー取得が成功するまで Supabase への永続化を禁止（取得失敗や空マージで DB を空にしない） */
   const suppressPersistUntilRemoteFetchRef = useRef(false)
   const persistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const savedFadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const googleSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const googleSyncRunningRef = useRef(false)
+  const googleSyncQueuedRef = useRef(false)
+  const gcalConnectedRef = useRef<boolean | null>(null)
+  const lastPersistedFingerprintRef = useRef<string | null>(null)
   const supabaseRef = useRef(createSupabaseClient())
+
+  const dismissPersistSaved = useCallback(() => {
+    if (savedFadeTimeoutRef.current) clearTimeout(savedFadeTimeoutRef.current)
+    setPersistUi((p) => ({ ...p, phase: 'idle', savedAt: null, errorMessage: null }))
+  }, [])
+
+  const dismissGoogleSync = useCallback(() => {
+    setPersistUi((p) => ({ ...p, googleSyncDismissed: true, googleSync: false }))
+  }, [])
+
+  const showSavedBriefly = useCallback(() => {
+    if (savedFadeTimeoutRef.current) clearTimeout(savedFadeTimeoutRef.current)
+    savedFadeTimeoutRef.current = setTimeout(() => {
+      setPersistUi((p) => (p.phase === 'saved' || p.phase === 'local_saved' ? { ...p, phase: 'idle', savedAt: null } : p))
+    }, 4000)
+  }, [])
+
+  const runQueuedGoogleSync = useCallback(async () => {
+    if (googleSyncRunningRef.current) {
+      googleSyncQueuedRef.current = true
+      return
+    }
+    googleSyncRunningRef.current = true
+    setPersistUi((p) => ({ ...p, googleSync: true, googleSyncDismissed: false }))
+    try {
+      await runGoogleCalendarSync()
+    } catch {
+      /* runGoogleCalendarSync はエラー時もスナップショットを書く */
+    } finally {
+      googleSyncRunningRef.current = false
+      setPersistUi((p) => ({ ...p, googleSync: false }))
+      if (googleSyncQueuedRef.current) {
+        googleSyncQueuedRef.current = false
+        void runQueuedGoogleSync()
+      }
+    }
+  }, [])
+
+  const scheduleGoogleCalendarSync = useCallback(() => {
+    if (stateRef.current.currentUser?.role !== 'teacher') return
+    if (googleSyncTimeoutRef.current) clearTimeout(googleSyncTimeoutRef.current)
+    googleSyncTimeoutRef.current = setTimeout(() => {
+      googleSyncTimeoutRef.current = null
+      void (async () => {
+        if (gcalConnectedRef.current === null) {
+          gcalConnectedRef.current = getGoogleCalendarConnectedCache()
+        }
+        if (gcalConnectedRef.current === null) {
+          gcalConnectedRef.current = await fetchGoogleCalendarConnected()
+        }
+        if (!gcalConnectedRef.current) return
+        await runQueuedGoogleSync()
+      })()
+    }, 4000)
+  }, [runQueuedGoogleSync])
 
   // Supabase 利用時: セッション復元と名簿/データ取得（エラー・ハング時も必ず SESSION_RESTORE_DONE する）
   useEffect(() => {
@@ -833,10 +934,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // LocalStorage に保存（Supabase 未使用時）
   useEffect(() => {
     if (supabaseRef.current || !hasRestoredRef.current) return
+    if (skipPersistRef.current) {
+      skipPersistRef.current = false
+      return
+    }
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+      setPersistUi((p) => ({ ...p, phase: 'local_saved', savedAt: new Date(), errorMessage: null }))
+      showSavedBriefly()
     } catch { /* ignore */ }
-  }, [state])
+  }, [state, showSavedBriefly])
 
   // ログアウト時に名前のみユーザーを localStorage から削除
   useEffect(() => {
@@ -845,32 +952,66 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [state.currentUser])
 
-  // Supabase 利用時: 状態変更をデバウンスして保存（先生のみ・セッションがあるときだけ）
+  // 先生ログイン時に Google 連携状態を1回だけキャッシュ（自動同期の無駄な API 呼び出しを減らす）
+  useEffect(() => {
+    if (state.currentUser?.role !== 'teacher') return
+    void fetchGoogleCalendarConnected().then((connected) => {
+      gcalConnectedRef.current = connected
+    })
+  }, [state.currentUser?.id, state.currentUser?.role])
+
+  // Supabase 利用時: 状態変更をデバウンスして保存
   useEffect(() => {
     const supabase = supabaseRef.current
     if (!supabase || !state.currentUser || !hasRestoredRef.current) return
     if (suppressPersistUntilRemoteFetchRef.current) return
+    const fingerprint = getPersistFingerprint(state)
     if (skipPersistRef.current) {
       skipPersistRef.current = false
+      lastPersistedFingerprintRef.current = fingerprint
       return
     }
+    if (lastPersistedFingerprintRef.current === fingerprint) return
     if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current)
+    setPersistUi((p) =>
+      p.phase === 'saving' ? p : { ...p, phase: 'pending', errorMessage: null }
+    )
     const isNameOnly = state.currentUser?.role === 'student' || state.currentUser?.role === 'accompanist'
     const delayMs = isNameOnly ? 400 : 1500
+    const isTeacher = state.currentUser?.role === 'teacher'
     persistTimeoutRef.current = setTimeout(async () => {
       persistTimeoutRef.current = null
       if (suppressPersistUntilRemoteFetchRef.current) return
+      setPersistUi((p) => ({ ...p, phase: 'saving', errorMessage: null }))
       const { data: { session } } = await supabase.auth.getSession()
+      let persistError: Error | null = null
       if (session) {
-        await persistState(supabase, state)
-      } else if (state.currentUser) {
-        await persistLessonsOnly(supabase, state.lessons)
+        const { error } = await persistState(supabase, stateRef.current)
+        persistError = error
+      } else if (stateRef.current.currentUser) {
+        const { error } = await persistLessonsOnly(supabase, stateRef.current.lessons)
+        persistError = error
+      }
+      if (persistError) {
+        setPersistUi((p) => ({
+          ...p,
+          phase: 'error',
+          errorMessage: persistError?.message ?? '保存に失敗しました',
+        }))
+        return
+      }
+      lastPersistedFingerprintRef.current = getPersistFingerprint(stateRef.current)
+      const savedAt = new Date()
+      setPersistUi((p) => ({ ...p, phase: 'saved', savedAt, errorMessage: null }))
+      showSavedBriefly()
+      if (isTeacher && session) {
+        scheduleGoogleCalendarSync()
       }
     }, delayMs)
     return () => {
       if (persistTimeoutRef.current) clearTimeout(persistTimeoutRef.current)
     }
-  }, [state])
+  }, [state, showSavedBriefly, scheduleGoogleCalendarSync])
 
   // 伴奏者が「可能」枠を変更したときに DB に保存（先生・生徒に反映するため）
   const accompanistAvailTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -951,6 +1092,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       value={{
         state,
         dispatch,
+        persistUi,
+        dismissPersistSaved,
+        dismissGoogleSync,
         getUserById,
         getDaySettings,
         getLessonsForDate,

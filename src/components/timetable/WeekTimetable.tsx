@@ -254,12 +254,18 @@ export default function WeekTimetable({ anchorDate }: WeekTimetableProps) {
         </div>
       </div>
 
-      <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-2">
-        <table className="w-full min-w-[720px] border-collapse text-[10px] sm:text-xs table-fixed">
+      <div className="w-full min-w-0 pb-2">
+        <table className="w-full border-collapse table-fixed text-[9px] sm:text-[10px]">
+          <colgroup>
+            <col className="w-[2.25rem] sm:w-10" />
+            {weekDates.map((ds) => (
+              <col key={ds} />
+            ))}
+          </colgroup>
           <thead>
             <tr className="border-b border-gray-200">
-              <th className="sticky left-0 z-20 bg-gray-50 p-1 w-[2.75rem] sm:w-12 text-left font-medium text-gray-500 align-bottom">
-                時刻
+              <th className="bg-gray-50 p-0.5 text-left font-medium text-gray-500 align-bottom">
+                <span className="sr-only">時刻</span>
               </th>
               {weekDates.map((ds, colIdx) => {
                 const settings = getDaySettings(ds)
@@ -269,48 +275,49 @@ export default function WeekTimetable({ anchorDate }: WeekTimetableProps) {
                   <th
                     key={ds}
                     className={cn(
-                      'p-1 font-normal align-bottom min-w-0',
+                      'p-0.5 font-normal align-bottom min-w-0',
                       isTodayCol && 'bg-indigo-50/80'
                     )}
                   >
-                    <div className="flex flex-col items-center gap-1 min-w-0 py-0.5">
-                      <span className="text-[9px] sm:text-[10px] text-gray-500">{WEEKDAY_LABELS[colIdx]}</span>
-                      <span className={cn('text-[11px] sm:text-xs font-semibold tabular-nums', isTodayCol && 'text-indigo-800')}>
-                        {m}/{d}
+                    <div className="flex flex-col items-center gap-0.5 min-w-0 py-0.5">
+                      <span
+                        className={cn(
+                          'text-[9px] sm:text-[10px] font-semibold tabular-nums leading-none whitespace-nowrap',
+                          isTodayCol ? 'text-indigo-800' : 'text-gray-800'
+                        )}
+                      >
+                        {WEEKDAY_LABELS[colIdx]}
+                        <span className="font-normal text-gray-500">{m}/{d}</span>
                       </span>
                       {isTeacher && (
-                        <div className="flex flex-col items-center gap-0.5 w-full">
-                          <span className="text-[8px] sm:text-[9px] text-gray-500">実施</span>
+                        <div className="flex flex-col items-center gap-0.5 w-full min-w-0">
                           <button
                             type="button"
                             role="switch"
                             aria-checked={settings.isLessonDay}
-                            aria-label={`${m}月${d}日 レッスン実施`}
+                            aria-label={`${m}月${d}日 レッスン実施 ${settings.isLessonDay ? 'あり' : 'なし'}`}
                             onClick={() => applyLessonDayToggle(ds, !settings.isLessonDay)}
                             className={cn(
-                              'relative inline-flex w-8 h-4 sm:w-9 sm:h-5 rounded-full transition-colors shrink-0',
+                              'relative inline-flex w-7 h-3.5 rounded-full transition-colors shrink-0',
                               settings.isLessonDay ? 'bg-indigo-600' : 'bg-gray-300'
                             )}
                           >
                             <span
                               className={cn(
-                                'pointer-events-none absolute left-0.5 top-1/2 h-3 w-3 sm:h-4 sm:w-4 -translate-y-1/2 rounded-full bg-white shadow transition-transform duration-200',
-                                settings.isLessonDay ? 'translate-x-4' : 'translate-x-0'
+                                'pointer-events-none absolute left-0.5 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-white shadow transition-transform duration-200',
+                                settings.isLessonDay ? 'translate-x-3.5' : 'translate-x-0'
                               )}
                             />
                           </button>
-                          <span className="text-[8px] leading-none text-gray-500">
-                            {settings.isLessonDay ? 'あり' : 'なし'}
-                          </span>
+                          {settings.isLessonDay && (
+                            <Link
+                              href={`/day/${ds}?mode=day`}
+                              className="text-[8px] leading-none text-gray-400 hover:text-indigo-600 truncate max-w-full"
+                            >
+                              設定
+                            </Link>
+                          )}
                         </div>
-                      )}
-                      {isTeacher && settings.isLessonDay && (
-                        <Link
-                          href={`/day/${ds}?mode=day`}
-                          className="text-[9px] text-gray-400 hover:text-indigo-600"
-                        >
-                          設定
-                        </Link>
                       )}
                     </div>
                   </th>
@@ -321,15 +328,15 @@ export default function WeekTimetable({ anchorDate }: WeekTimetableProps) {
           <tbody>
             {sortedStartTimes.map((startTime) => (
               <tr key={startTime} className="border-b border-gray-100">
-                <td className="sticky left-0 z-10 bg-gray-50 p-0.5 sm:p-1 font-mono text-[9px] sm:text-[10px] text-gray-500 whitespace-nowrap">
+                <td className="bg-gray-50 p-0.5 font-mono text-[8px] sm:text-[9px] text-gray-500 leading-tight align-middle">
                   {startTime}
                 </td>
                 {weekDates.map((ds) => {
                   const settings = getDaySettings(ds)
                   if (!settings.isLessonDay) {
                     return (
-                      <td key={ds} className="p-0.5 align-middle bg-gray-50/80">
-                        <div className="min-h-[2rem] sm:min-h-[2.25rem] rounded border border-transparent flex items-center justify-center text-gray-300">
+                      <td key={ds} className="p-px align-middle bg-gray-50/80">
+                        <div className="min-h-[1.5rem] sm:min-h-[1.75rem] rounded border border-transparent flex items-center justify-center text-gray-300">
                           —
                         </div>
                       </td>
@@ -351,9 +358,9 @@ export default function WeekTimetable({ anchorDate }: WeekTimetableProps) {
                     )
 
                   return (
-                    <td key={`${ds}-${startTime}`} className="p-0.5 align-middle">
+                    <td key={`${ds}-${startTime}`} className="p-px align-middle">
                       {!slot ? (
-                        <div className="min-h-[2rem] sm:min-h-[2.25rem] rounded bg-gray-50/50 border border-transparent" />
+                        <div className="min-h-[1.5rem] sm:min-h-[1.75rem] rounded bg-gray-50/50 border border-transparent" />
                       ) : currentUser.role === 'student' ? (
                         <button
                           type="button"
@@ -372,26 +379,26 @@ export default function WeekTimetable({ anchorDate }: WeekTimetableProps) {
                             }
                           }}
                           className={cn(
-                            'w-full min-h-[2rem] sm:min-h-[2.25rem] rounded px-0.5 py-0.5 text-center leading-tight',
+                            'w-full min-h-[1.5rem] sm:min-h-[1.75rem] rounded px-0.5 py-px text-center leading-tight',
                             cellClass(slot, true),
                             slot.status === 'available' && studentDayBlock && 'opacity-40 cursor-not-allowed',
                             'cursor-pointer active:scale-[0.98]'
                           )}
                         >
-                          <span className="line-clamp-2 break-all">{compactCellLabel(slot)}</span>
+                          <span className="line-clamp-2 break-all text-[8px] sm:text-[9px]">{compactCellLabel(slot)}</span>
                         </button>
                       ) : (
                         <button
                           type="button"
                           onClick={() => slot && handleSlotClick(slot)}
                           className={cn(
-                            'w-full min-h-[2rem] sm:min-h-[2.25rem] rounded px-0.5 py-0.5 text-center leading-tight',
+                            'w-full min-h-[1.5rem] sm:min-h-[1.75rem] rounded px-0.5 py-px text-center leading-tight',
                             cellClass(slot, true),
                             clickable && 'cursor-pointer hover:opacity-90 active:scale-[0.98]',
                             !clickable && 'cursor-default'
                           )}
                         >
-                          <span className="line-clamp-2 break-all">{compactCellLabel(slot)}</span>
+                          <span className="line-clamp-2 break-all text-[8px] sm:text-[9px]">{compactCellLabel(slot)}</span>
                         </button>
                       )}
                     </td>

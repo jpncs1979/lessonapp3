@@ -10,7 +10,12 @@ import type { DaySettings, EndTimeMode } from '@/types'
 
 const SWIPE_THRESHOLD = 50
 
-const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
+const WEEKDAYS = ['月', '火', '水', '木', '金', '土', '日']
+
+/** JS getDay()（0=日）を月曜始まりの列位置（0=月…6=日）に変換 */
+function mondayBasedCol(jsDay: number): number {
+  return (jsDay + 6) % 7
+}
 
 /** 日付セル内のマーカー（生徒は主に丸、レッスンのみ文字） */
 type CalendarDayMark =
@@ -46,10 +51,10 @@ export default function MonthCalendar() {
   const dayGridRef = useRef<HTMLDivElement>(null)
 
   const days = getDaysInMonth(year, month)
-  const firstDay = new Date(year, month - 1, 1).getDay() // 0=日
+  const firstDayCol = mondayBasedCol(new Date(year, month - 1, 1).getDay())
 
-  // 前月の末尾で埋める空白
-  const blanks = Array(firstDay).fill(null)
+  // 前月の末尾で埋める空白（月曜始まり）
+  const blanks = Array(firstDayCol).fill(null)
   const todayStr = today()
 
   const isTeacher = currentUser?.role === 'teacher'
@@ -311,7 +316,7 @@ export default function MonthCalendar() {
             key={w}
             className={cn(
               'py-1 sm:py-2 text-center text-[10px] sm:text-xs font-medium',
-              i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-gray-500'
+              i === 6 ? 'text-red-500' : i === 5 ? 'text-blue-500' : 'text-gray-500'
             )}
           >
             {w}
@@ -450,12 +455,11 @@ export default function MonthCalendar() {
           <div key={`blank-${i}`} className="min-h-[52px] sm:min-h-[72px] border-b border-r border-gray-50 last:border-r-0" />
         ))}
 
-        {days.map((dateStr, i) => {
+        {days.map((dateStr) => {
           const dayNum = new Date(dateStr + 'T00:00:00').getDate()
-          const dayOfWeek = new Date(dateStr + 'T00:00:00').getDay()
           const isToday = dateStr === todayStr
           const isPast = dateStr < todayStr
-          const col = (i + firstDay) % 7
+          const col = mondayBasedCol(new Date(dateStr + 'T00:00:00').getDay())
 
           const mark = getDayMark(dateStr)
           const dayInfo = getDayInfo(dateStr)
@@ -584,9 +588,9 @@ export default function MonthCalendar() {
                     'w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-full text-xs sm:text-sm font-medium',
                     isToday
                       ? 'bg-indigo-600 text-white'
-                      : col === 0
-                      ? 'text-red-500'
                       : col === 6
+                      ? 'text-red-500'
+                      : col === 5
                       ? 'text-blue-500'
                       : 'text-gray-700'
                   )}
