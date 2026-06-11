@@ -525,68 +525,91 @@ export async function persistWeeklyMasters(
   }
 }
 
-/** 状態を Supabase に保存 */
+async function syncAppUsers(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  users: AppState['users']
+): Promise<{ error: Error | null }> {
+  const stateUserIds = new Set(users.map((u) => u.id))
+  if (users.length > 0) {
+    const rows = users.map((u) => ({ id: u.id, name: u.name, role: u.role }))
+    for (const chunk of chunkArray(rows, 200)) {
+      const { error } = await supabase.from('app_users').upsert(chunk, { onConflict: 'id' })
+      if (error) return { error: error as unknown as Error }
+    }
+  }
+  const { data: existingAppUsers, error: selectErr } = await supabase.from('app_users').select('id')
+  if (selectErr) return { error: selectErr as unknown as Error }
+  const toDelete = (existingAppUsers ?? []).filter((r) => !stateUserIds.has(r.id)).map((r) => r.id)
+  for (const ids of chunkArray(toDelete, 200)) {
+    const { error: delErr } = await supabase.from('app_users').delete().in('id', ids)
+    if (delErr) return { error: delErr as unknown as Error }
+  }
+  return { error: null }
+}
+
+async function syncDaySettings(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  daySettings: AppState['daySettings']
+): Promise<{ error: Error | null }> {
+  if (daySettings.length === 0) return { error: null }
+  const rows = daySettings.map((s) => ({
+    date: s.date,
+    end_time_mode: s.endTimeMode,
+    lunch_break_open: s.lunchBreakOpen,
+    default_room: s.defaultRoom,
+    provisional_hours: s.provisionalHours,
+    start_time: s.startTime,
+    is_lesson_day: s.isLessonDay,
+  }))
+  for (const chunk of chunkArray(rows, 200)) {
+    const { error } = await supabase.from('day_settings').upsert(chunk, { onConflict: 'date' })
+    if (error) return { error: error as unknown as Error }
+  }
+  return { error: null }
+}
+
+async function syncAccompanistAvailabilities(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  availabilities: AppState['accompanistAvailabilities']
+): Promise<{ error: Error | null }> {
+  const { data: existingAv, error: selectErr } = await supabase
+    .from('accompanist_availabilities')
+    .select('id')
+  if (selectErr) return { error: selectErr as unknown as Error }
+  const existingIds = (existingAv ?? []).map((r) => r.id)
+  for (const ids of chunkArray(existingIds, 200)) {
+    const { error: delErr } = await supabase.from('accompanist_availabilities').delete().in('id', ids)
+    if (delErr) return { error: delErr as unknown as Error }
+  }
+  if (availabilities.length === 0) return { error: null }
+  const rows = availabilities.map((a) => ({
+    id: a.id,
+    slot_id: a.slotId,
+    accompanist_id: a.accompanistId,
+    created_at: a.createdAt,
+  }))
+  for (const chunk of chunkArray(rows, 200)) {
+    const { error } = await supabase.from('accompanist_availabilities').insert(chunk)
+    if (error) return { error: error as unknown as Error }
+  }
+  return { error: null }
+}
+
+/** 状態を Supabase に保存（テーブルごとに並列実行して高速化） */
 export async function persistState(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   state: AppState
 ): Promise<{ error: Error | null }> {
   try {
-    // app_users: 名簿は state.users を正とする。upsert したあと、DB にだけある id は削除
-    const stateUserIds = new Set(state.users.map((u) => u.id))
-    for (const u of state.users) {
-      const { error } = await supabase.from('app_users').upsert(
-        { id: u.id, name: u.name, role: u.role },
-        { onConflict: 'id' }
-      )
-      if (error) return { error: error as unknown as Error }
-    }
-    const { data: existingAppUsers } = await supabase.from('app_users').select('id')
-    const toDelete = (existingAppUsers ?? []).filter((r) => !stateUserIds.has(r.id)).map((r) => r.id)
-    if (toDelete.length > 0) {
-      const { error: delErr } = await supabase.from('app_users').delete().in('id', toDelete)
-      if (delErr) return { error: delErr as unknown as Error }
-    }
-
-    // day_settings: date で upsert
-    for (const s of state.daySettings) {
-      const { error } = await supabase.from('day_settings').upsert(
-        {
-          date: s.date,
-          end_time_mode: s.endTimeMode,
-          lunch_break_open: s.lunchBreakOpen,
-          default_room: s.defaultRoom,
-          provisional_hours: s.provisionalHours,
-          start_time: s.startTime,
-          is_lesson_day: s.isLessonDay,
-        },
-        { onConflict: 'date' }
-      )
-      if (error) return { error: error as unknown as Error }
-    }
-
-    // lessons: upsert 後に不要 ID のみ削除（全削除→再挿入を廃止）
-    const lessonsSyncResult = await syncLessonsTable(supabase, state.lessons)
-    if (lessonsSyncResult.error) return lessonsSyncResult
-
-    const wmErr = await persistWeeklyMasters(supabase, state.weekly_masters)
-    if (wmErr.error) return wmErr
-
-    // accompanist_availabilities: 既存を削除して再挿入
-    const { data: existingAv } = await supabase.from('accompanist_availabilities').select('id')
-    if (existingAv?.length) {
-      const { error: delErr } = await supabase.from('accompanist_availabilities').delete().in('id', existingAv.map((r) => r.id))
-      if (delErr) return { error: delErr as unknown as Error }
-    }
-    if (state.accompanistAvailabilities.length > 0) {
-      const rows = state.accompanistAvailabilities.map((a) => ({
-        id: a.id,
-        slot_id: a.slotId,
-        accompanist_id: a.accompanistId,
-        created_at: a.createdAt,
-      }))
-      const { error } = await supabase.from('accompanist_availabilities').insert(rows)
-      if (error) return { error: error as unknown as Error }
-    }
+    const results = await Promise.all([
+      syncAppUsers(supabase, state.users),
+      syncDaySettings(supabase, state.daySettings),
+      syncLessonsTable(supabase, state.lessons),
+      persistWeeklyMasters(supabase, state.weekly_masters),
+      syncAccompanistAvailabilities(supabase, state.accompanistAvailabilities),
+    ])
+    const failed = results.find((r) => r.error)
+    if (failed?.error) return { error: failed.error }
     return { error: null }
   } catch (e) {
     return { error: e instanceof Error ? e : new Error(String(e)) }

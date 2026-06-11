@@ -54,7 +54,7 @@ export default function GoogleCalendarSettingsPage() {
     if (!g) return
     if (g === 'connected') {
       setGoogleCalendarConnectedCache(true)
-      setToast({ ok: true, text: 'Google カレンダーと連携しました。「サーバーに保存」でカレンダーにも反映されます。' })
+      setToast({ ok: true, text: 'Google カレンダーと連携しました。左メニューの「カレンダー同期」で反映できます。' })
       void loadStatus()
     } else if (g === 'error') {
       setToast({
@@ -125,7 +125,7 @@ export default function GoogleCalendarSettingsPage() {
       <h1 className="text-xl font-bold text-gray-900 mb-1">Google カレンダー同期</h1>
       <p className="text-sm text-gray-500 mb-6">
         予約済みのレッスン（生徒が紐づいている枠）を、お使いの Google カレンダーに反映します。
-        連携済みの場合、画面の「サーバーに保存」を押すと同時にカレンダーへも反映されます。
+        連携済みの場合、左メニューの「カレンダー同期」ボタンで反映します（サーバー保存とは別です）。
       </p>
 
       {noSupabase && (

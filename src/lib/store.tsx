@@ -41,6 +41,8 @@ export type PersistUiState = {
   savedAt: Date | null
   errorMessage: string | null
   gcalMessage: string | null
+  /** Google カレンダー同期がバックグラウンドで進行中 */
+  gcalSyncing: boolean
   hasUnsavedChanges: boolean
 }
 
@@ -636,8 +638,10 @@ interface AppContextType {
   dispatch: React.Dispatch<Action>
   persistUi: PersistUiState
   dismissPersistStatus: () => void
-  /** 先生: サーバー保存＋Googleカレンダー同期（連携時） */
+  /** 先生: サーバーに保存 */
   saveToServer: () => Promise<{ ok: boolean; message?: string }>
+  /** 先生: Google カレンダーに同期 */
+  syncGoogleCalendar: () => Promise<{ ok: boolean; message?: string }>
   getUserById: (id?: string) => User | undefined
   getDaySettings: (date: string) => DaySettings
   getLessonsForDate: (date: string) => LessonSlot[]
@@ -730,6 +734,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     savedAt: null,
     errorMessage: null,
     gcalMessage: null,
+    gcalSyncing: false,
     hasUnsavedChanges: false,
   })
   const hasRestoredRef = React.useRef(false)
@@ -740,6 +745,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const gcalConnectedRef = useRef<boolean | null>(null)
   const lastPersistedFingerprintRef = useRef<string | null>(null)
   const saveInFlightRef = useRef(false)
+  const gcalSyncInFlightRef = useRef(false)
   const supabaseRef = useRef(createSupabaseClient())
 
   const dismissPersistStatus = useCallback(() => {
@@ -749,6 +755,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       savedAt: null,
       errorMessage: null,
       gcalMessage: null,
+      gcalSyncing: false,
     }))
   }, [])
 
@@ -779,6 +786,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       savedAt: null,
       errorMessage: null,
       gcalMessage: null,
+      gcalSyncing: false,
       hasUnsavedChanges: true,
     })
 
@@ -807,53 +815,58 @@ export function AppProvider({ children }: { children: ReactNode }) {
       markSyncedFingerprint()
       setPersistUi((p) => ({
         ...p,
-        phase: 'saved',
+        phase: 'done',
         savedAt,
         errorMessage: null,
-        gcalMessage: null,
       }))
 
+      return { ok: true, message: 'サーバーに保存しました' }
+    } finally {
+      saveInFlightRef.current = false
+    }
+  }, [markSyncedFingerprint])
+
+  const syncGoogleCalendar = useCallback(async (): Promise<{ ok: boolean; message?: string }> => {
+    if (gcalSyncInFlightRef.current) {
+      return { ok: false, message: 'カレンダー同期中です' }
+    }
+    if (stateRef.current.currentUser?.role !== 'teacher') {
+      return { ok: false, message: '先生のみ利用できます' }
+    }
+
+    gcalSyncInFlightRef.current = true
+    setPersistUi((p) => ({ ...p, gcalSyncing: true, gcalMessage: null }))
+
+    try {
       if (gcalConnectedRef.current === null) {
         gcalConnectedRef.current = getGoogleCalendarConnectedCache()
       }
       if (gcalConnectedRef.current === null) {
         gcalConnectedRef.current = await fetchGoogleCalendarConnected()
       }
-
       if (!gcalConnectedRef.current) {
-        setPersistUi((p) => ({ ...p, phase: 'done', gcalMessage: null }))
-        return { ok: true, message: 'サーバーに保存しました' }
+        const msg = 'Google カレンダーが未連携です（設定から連携）'
+        setPersistUi((p) => ({ ...p, gcalMessage: msg }))
+        return { ok: false, message: msg }
       }
 
-      setPersistUi((p) => ({ ...p, phase: 'gcal_syncing' }))
       const gcal = await runGoogleCalendarSync()
-
       if (!gcal.message) {
-        setPersistUi((p) => ({ ...p, phase: 'done', gcalMessage: null }))
-        return { ok: true, message: 'サーバーに保存しました' }
+        const msg = 'カレンダーを確認しました（変更なし）'
+        setPersistUi((p) => ({ ...p, gcalMessage: msg }))
+        return { ok: true, message: msg }
       }
-
       if (!gcal.ok) {
-        setPersistUi((p) => ({
-          ...p,
-          phase: 'error',
-          errorMessage: `サーバー保存は完了しましたが、${gcal.message}`,
-          gcalMessage: gcal.message,
-        }))
+        setPersistUi((p) => ({ ...p, gcalMessage: gcal.message }))
         return { ok: false, message: gcal.message }
       }
-
-      setPersistUi((p) => ({
-        ...p,
-        phase: 'done',
-        gcalMessage: gcal.message,
-        errorMessage: null,
-      }))
-      return { ok: true, message: `サーバーに保存しました。${gcal.message}` }
+      setPersistUi((p) => ({ ...p, gcalMessage: gcal.message }))
+      return { ok: true, message: gcal.message }
     } finally {
-      saveInFlightRef.current = false
+      gcalSyncInFlightRef.current = false
+      setPersistUi((p) => ({ ...p, gcalSyncing: false }))
     }
-  }, [markSyncedFingerprint])
+  }, [])
 
   // Supabase 利用時: セッション復元と名簿/データ取得（エラー・ハング時も必ず SESSION_RESTORE_DONE する）
   useEffect(() => {
@@ -1155,6 +1168,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         persistUi,
         dismissPersistStatus,
         saveToServer,
+        syncGoogleCalendar,
         getUserById,
         getDaySettings,
         getLessonsForDate,
