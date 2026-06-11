@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { ChevronLeft, Check, Download, Save } from 'lucide-react'
 import { useApp, makeDefaultDaySettings } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import { createSupabaseClient } from '@/lib/supabase/client'
-import { fetchWeeklyMasters, persistState, persistWeeklyMasters } from '@/lib/supabase/sync'
+import { fetchWeeklyMasters, persistWeeklyMasters } from '@/lib/supabase/sync'
 import { getLessonSlotList } from '@/lib/schedule'
 import { today } from '@/lib/schedule'
 import { WeeklyMaster } from '@/types'
@@ -68,14 +68,12 @@ function persistErrorMessage(err: unknown): string {
 }
 
 export default function WeeklyMasterPage() {
-  const { state, dispatch } = useApp()
+  const { state, dispatch, saveToServer } = useApp()
   const { students, weekly_masters, currentUser, daySettings } = state
 
   const [localMap, setLocalMap] = useState<Record<string, string>>({})
   const [activeDayOfWeek, setActiveDayOfWeek] = useState<number>(() => new Date().getDay())
   const [saveNonce, setSaveNonce] = useState(0)
-  const stateRef = useRef(state)
-  stateRef.current = state
 
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -115,28 +113,24 @@ export default function WeeklyMasterPage() {
     return () => clearTimeout(t)
   }, [feedback])
 
-  // カレンダー反映後：全体を Supabase に同期（レッスン枠・他テーブル含む）
+  // カレンダー反映後：差分保存（state 更新後に saveToServer）
   useEffect(() => {
     if (saveNonce === 0) return
     let cancelled = false
-    const supabase = createSupabaseClient()
-    if (!supabase) return
     void (async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session || cancelled) return
-      const { error } = await persistState(supabase, stateRef.current)
+      const result = await saveToServer()
       if (cancelled) return
-      if (error) {
+      if (!result.ok) {
         setFeedback({
           ok: false,
-          text: `サーバー同期に失敗しました: ${persistErrorMessage(error)}`,
+          text: `サーバー同期に失敗しました: ${result.message ?? '不明なエラー'}`,
         })
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [saveNonce])
+  }, [saveNonce, saveToServer])
 
   if (!currentUser || currentUser.role !== 'teacher') {
     return (

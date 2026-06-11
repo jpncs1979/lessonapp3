@@ -14,8 +14,9 @@ import {
   fetchAppUsers,
   fetchFullState,
   fetchFullStateWithTimeout,
-  persistStateWithTimeout,
+  persistStateDelta,
   getSessionWithTimeout,
+  createBaselineFromState,
   persistLessonsOnly,
   persistAccompanistAvailabilities,
   signOutSupabase,
@@ -27,6 +28,7 @@ import {
   getGoogleCalendarConnectedCache,
   runGoogleCalendarSync,
 } from '@/lib/google-calendar/client-sync'
+import type { SyncBaseline } from '@/lib/persist-diff'
 
 export type PersistUiPhase =
   | 'idle'
@@ -745,6 +747,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const studentPersistTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const gcalConnectedRef = useRef<boolean | null>(null)
   const lastPersistedFingerprintRef = useRef<string | null>(null)
+  const syncBaselineRef = useRef<SyncBaseline | null>(null)
   const saveInFlightRef = useRef(false)
   const gcalSyncInFlightRef = useRef(false)
   const supabaseRef = useRef(createSupabaseClient())
@@ -761,6 +764,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const markSyncedFingerprint = useCallback(() => {
+    syncBaselineRef.current = createBaselineFromState(stateRef.current)
     lastPersistedFingerprintRef.current = getPersistFingerprint(stateRef.current)
     setPersistUi((p) => ({ ...p, hasUnsavedChanges: false }))
   }, [])
@@ -802,7 +806,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return { ok: false, message: 'ログインセッションがありません' }
       }
 
-      const { error: persistError } = await persistStateWithTimeout(supabase, stateRef.current)
+      const baseline =
+        syncBaselineRef.current ??
+        createBaselineFromState({
+          lessons: [],
+          daySettings: [],
+          users: [],
+          weekly_masters: [],
+          accompanistAvailabilities: [],
+        })
+
+      const { error: persistError } = await persistStateDelta(supabase, stateRef.current, baseline, {
+        useTeacherBulkLessons: true,
+      })
       if (persistError) {
         setPersistUi((p) => ({
           ...p,
@@ -1020,6 +1036,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (supabaseRef.current || !hasRestoredRef.current) return
     if (skipPersistRef.current) {
       skipPersistRef.current = false
+      syncBaselineRef.current = createBaselineFromState(state)
       lastPersistedFingerprintRef.current = getPersistFingerprint(state)
       setPersistUi((p) => ({ ...p, hasUnsavedChanges: false }))
       return
@@ -1057,6 +1074,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!hasRestoredRef.current || suppressPersistUntilRemoteFetchRef.current) return
     if (skipPersistRef.current) {
       skipPersistRef.current = false
+      syncBaselineRef.current = createBaselineFromState(state)
       lastPersistedFingerprintRef.current = getPersistFingerprint(state)
       setPersistUi((p) => ({ ...p, hasUnsavedChanges: false }))
       return
@@ -1078,6 +1096,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const fingerprint = getPersistFingerprint(state)
     if (skipPersistRef.current) {
       skipPersistRef.current = false
+      syncBaselineRef.current = createBaselineFromState(state)
       lastPersistedFingerprintRef.current = fingerprint
       return
     }
@@ -1086,8 +1105,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     studentPersistTimeoutRef.current = setTimeout(async () => {
       studentPersistTimeoutRef.current = null
       if (suppressPersistUntilRemoteFetchRef.current) return
-      const { error } = await persistLessonsOnly(supabase, stateRef.current.lessons)
-      if (!error) lastPersistedFingerprintRef.current = getPersistFingerprint(stateRef.current)
+      const { error } = await persistLessonsOnly(
+        supabase,
+        stateRef.current.lessons,
+        syncBaselineRef.current?.lessons ?? null
+      )
+      if (!error) {
+        if (syncBaselineRef.current) {
+          syncBaselineRef.current.lessons = createBaselineFromState(stateRef.current).lessons
+        }
+        lastPersistedFingerprintRef.current = getPersistFingerprint(stateRef.current)
+      }
     }, 400)
     return () => {
       if (studentPersistTimeoutRef.current) clearTimeout(studentPersistTimeoutRef.current)

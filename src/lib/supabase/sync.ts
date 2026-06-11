@@ -7,6 +7,18 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppState } from '@/lib/store'
 import { normalizePendingToConfirmed } from '@/lib/utils'
 import type { User, DaySettings, LessonSlot, WeeklyMaster, AccompanistAvailability } from '@/types'
+import {
+  type SyncBaseline,
+  accompanistAvailabilitiesHash,
+  computeDaySettingsDiff,
+  computeLessonDiff,
+  computeUsersDiff,
+  createBaselineFromState,
+  weeklyMastersHash,
+} from '@/lib/persist-diff'
+
+export type { SyncBaseline }
+export { createBaselineFromState }
 
 export type LoginHistoryRow = {
   app_user_id: string
@@ -481,7 +493,21 @@ async function fetchAllRowIds(
 }
 
 export const GET_SESSION_TIMEOUT_MS = 12_000
-const PERSIST_STATE_TIMEOUT_MS = 90_000
+
+function isMissingRpcError(err: unknown): boolean {
+  if (err == null) return false
+  const code =
+    typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code?: string }).code ?? '')
+      : ''
+  const msg =
+    typeof err === 'object' && err !== null && 'message' in err
+      ? String((err as { message: string }).message)
+      : err instanceof Error
+        ? err.message
+        : String(err)
+  return code === '42883' || /Could not find the function|function .* does not exist/i.test(msg)
+}
 
 /** getSession() がトークン更新でハングしたとき UI が固まらないよう上限を設ける */
 export async function getSessionWithTimeout(
@@ -513,6 +539,37 @@ export async function getSessionWithTimeout(
  * 2) その後、入力に存在しない ID だけ削除
  * これにより「削除は成功したが挿入失敗」で全消失するリスクを避ける
  */
+/** 差分だけ lessons を同期（先生は RPC 1 回、それ以外は upsert/delete のみ） */
+export async function syncLessonsDelta(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  upserts: LessonSlot[],
+  deletes: string[],
+  options?: { useTeacherBulkRpc?: boolean }
+): Promise<{ error: Error | null }> {
+  if (upserts.length === 0 && deletes.length === 0) return { error: null }
+
+  if (options?.useTeacherBulkRpc) {
+    const { error } = await supabase.rpc('sync_lessons_bulk', {
+      p_upserts: upserts.map(toDbLessonRow),
+      p_delete_ids: deletes,
+    })
+    if (!error) return { error: null }
+    if (!isMissingRpcError(error)) return { error: error as unknown as Error }
+  }
+
+  for (const ids of chunkArray(deletes, 500)) {
+    if (ids.length === 0) continue
+    const { error: delErr } = await supabase.from('lessons').delete().in('id', ids)
+    if (delErr) return { error: delErr as unknown as Error }
+  }
+  for (const chunk of chunkArray(upserts.map(toDbLessonRow), 500)) {
+    const { error } = await supabase.from('lessons').upsert(chunk, { onConflict: 'id' })
+    if (error) return { error: error as unknown as Error }
+  }
+  return { error: null }
+}
+
+/** @deprecated フル同期。差分保存の persistStateDelta を使うこと */
 async function syncLessonsTable(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   lessons: LessonSlot[]
@@ -572,6 +629,28 @@ export async function persistWeeklyMasters(
   }
 }
 
+async function syncAppUsersDelta(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  users: AppState['users'],
+  baseline: Map<string, string>
+): Promise<{ error: Error | null }> {
+  const { upserts, deletes } = computeUsersDiff(users, baseline)
+  if (upserts.length > 0) {
+    const rows = upserts.map((u) => ({ id: u.id, name: u.name, role: u.role }))
+    for (const chunk of chunkArray(rows, 200)) {
+      const { error } = await supabase.from('app_users').upsert(chunk, { onConflict: 'id' })
+      if (error) return { error: error as unknown as Error }
+    }
+  }
+  for (const ids of chunkArray(deletes, 200)) {
+    if (ids.length === 0) continue
+    const { error: delErr } = await supabase.from('app_users').delete().in('id', ids)
+    if (delErr) return { error: delErr as unknown as Error }
+  }
+  return { error: null }
+}
+
+/** @deprecated フル同期用 */
 async function syncAppUsers(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   users: AppState['users']
@@ -594,6 +673,30 @@ async function syncAppUsers(
   return { error: null }
 }
 
+async function syncDaySettingsDelta(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  daySettings: AppState['daySettings'],
+  baseline: Map<string, string>
+): Promise<{ error: Error | null }> {
+  const { upserts } = computeDaySettingsDiff(daySettings, baseline)
+  if (upserts.length === 0) return { error: null }
+  const rows = upserts.map((s) => ({
+    date: s.date,
+    end_time_mode: s.endTimeMode,
+    lunch_break_open: s.lunchBreakOpen,
+    default_room: s.defaultRoom,
+    provisional_hours: s.provisionalHours,
+    start_time: s.startTime,
+    is_lesson_day: s.isLessonDay,
+  }))
+  for (const chunk of chunkArray(rows, 200)) {
+    const { error } = await supabase.from('day_settings').upsert(chunk, { onConflict: 'date' })
+    if (error) return { error: error as unknown as Error }
+  }
+  return { error: null }
+}
+
+/** @deprecated フル同期用 */
 async function syncDaySettings(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   daySettings: AppState['daySettings']
@@ -615,6 +718,36 @@ async function syncDaySettings(
   return { error: null }
 }
 
+async function syncAccompanistAvailabilitiesDelta(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  availabilities: AppState['accompanistAvailabilities'],
+  baseline: SyncBaseline
+): Promise<{ error: Error | null }> {
+  if (accompanistAvailabilitiesHash(availabilities) === baseline.accompanistAvailabilitiesHash) {
+    return { error: null }
+  }
+  const currentIds = new Set(availabilities.map((a) => a.id))
+  const toDelete = [...baseline.accompanistAvailabilityIds].filter((id) => !currentIds.has(id))
+  for (const ids of chunkArray(toDelete, 200)) {
+    if (ids.length === 0) continue
+    const { error: delErr } = await supabase.from('accompanist_availabilities').delete().in('id', ids)
+    if (delErr) return { error: delErr as unknown as Error }
+  }
+  if (availabilities.length === 0) return { error: null }
+  const rows = availabilities.map((a) => ({
+    id: a.id,
+    slot_id: a.slotId,
+    accompanist_id: a.accompanistId,
+    created_at: a.createdAt,
+  }))
+  for (const chunk of chunkArray(rows, 200)) {
+    const { error } = await supabase.from('accompanist_availabilities').upsert(chunk, { onConflict: 'id' })
+    if (error) return { error: error as unknown as Error }
+  }
+  return { error: null }
+}
+
+/** @deprecated フル同期用 */
 async function syncAccompanistAvailabilities(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   availabilities: AppState['accompanistAvailabilities']
@@ -642,61 +775,71 @@ async function syncAccompanistAvailabilities(
   return { error: null }
 }
 
-/** 状態を Supabase に保存（テーブルは直列。並列だと接続競合でハングしやすい） */
-export async function persistState(
+/** 変更分だけ Supabase に保存（本番の大量 lessons でも数秒以内を目指す） */
+export async function persistStateDelta(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
-  state: AppState
+  state: AppState,
+  baseline: SyncBaseline,
+  options?: { useTeacherBulkLessons?: boolean }
 ): Promise<{ error: Error | null }> {
   try {
-    const steps = [
-      () => syncAppUsers(supabase, state.users),
-      () => syncDaySettings(supabase, state.daySettings),
-      () => syncLessonsTable(supabase, state.lessons),
-      () => persistWeeklyMasters(supabase, state.weekly_masters),
-      () => syncAccompanistAvailabilities(supabase, state.accompanistAvailabilities),
-    ]
-    for (const step of steps) {
-      const result = await step()
-      if (result.error) return { error: result.error }
+    const userResult = await syncAppUsersDelta(supabase, state.users, baseline.users)
+    if (userResult.error) return userResult
+
+    const dayResult = await syncDaySettingsDelta(supabase, state.daySettings, baseline.daySettings)
+    if (dayResult.error) return dayResult
+
+    const lessonDiff = computeLessonDiff(state.lessons, baseline.lessons)
+    const lessonResult = await syncLessonsDelta(
+      supabase,
+      lessonDiff.upserts,
+      lessonDiff.deletes,
+      { useTeacherBulkRpc: options?.useTeacherBulkLessons ?? false }
+    )
+    if (lessonResult.error) return lessonResult
+
+    if (weeklyMastersHash(state.weekly_masters) !== baseline.weeklyMastersHash) {
+      const wmErr = await persistWeeklyMasters(supabase, state.weekly_masters)
+      if (wmErr.error) return wmErr
     }
+
+    const avResult = await syncAccompanistAvailabilitiesDelta(
+      supabase,
+      state.accompanistAvailabilities,
+      baseline
+    )
+    if (avResult.error) return avResult
+
     return { error: null }
   } catch (e) {
     return { error: e instanceof Error ? e : new Error(String(e)) }
   }
 }
 
-/** persistState が通信ハングで終わらないときに UI が「保存中」のまま固まらないよう上限を設ける */
-export async function persistStateWithTimeout(
+/** @deprecated persistStateDelta を使用 */
+export async function persistState(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
-  state: AppState,
-  timeoutMs: number = PERSIST_STATE_TIMEOUT_MS
+  state: AppState
 ): Promise<{ error: Error | null }> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined
-  const timeoutPromise = new Promise<{ error: Error }>((resolve) => {
-    timeoutId = setTimeout(
-      () =>
-        resolve({
-          error: new Error(
-            'サーバーへの保存がタイムアウトしました。通信状況を確認して再度お試しください。'
-          ),
-        }),
-      timeoutMs
-    )
+  const baseline = createBaselineFromState({
+    lessons: [],
+    daySettings: [],
+    users: [],
+    weekly_masters: [],
+    accompanistAvailabilities: [],
   })
-  try {
-    return await Promise.race([persistState(supabase, state), timeoutPromise])
-  } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId)
-  }
+  return persistStateDelta(supabase, state, baseline, { useTeacherBulkLessons: true })
 }
 
-/** lessons だけを保存（名前のみの生徒・伴奏者の予約を anon で保存するため） */
+/** lessons だけを差分保存（生徒・伴奏者の予約用） */
 export async function persistLessonsOnly(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
-  lessons: LessonSlot[]
+  lessons: LessonSlot[],
+  lessonBaseline: Map<string, string> | null
 ): Promise<{ error: Error | null }> {
   try {
-    return await syncLessonsTable(supabase, lessons)
+    const diff = computeLessonDiff(lessons, lessonBaseline ?? new Map())
+    return await syncLessonsDelta(supabase, diff.upserts, diff.deletes, { useTeacherBulkRpc: false })
   } catch (e) {
     return { error: e instanceof Error ? e : new Error(String(e)) }
   }
