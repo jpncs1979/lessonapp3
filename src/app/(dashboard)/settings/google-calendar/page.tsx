@@ -54,7 +54,7 @@ export default function GoogleCalendarSettingsPage() {
     if (!g) return
     if (g === 'connected') {
       setGoogleCalendarConnectedCache(true)
-      setToast({ ok: true, text: 'Google カレンダーと連携しました。DB保存後に自動同期されます。手動は「今すぐ同期」でも可能です。' })
+      setToast({ ok: true, text: 'Google カレンダーと連携しました。「サーバーに保存」でカレンダーにも反映されます。' })
       void loadStatus()
     } else if (g === 'error') {
       setToast({
@@ -72,12 +72,12 @@ export default function GoogleCalendarSettingsPage() {
     setSyncing(true)
     setToast(null)
     try {
-      const snap = await runGoogleCalendarSync()
-      if (snap.status === 'error' || !snap.ok) {
-        setToast({ ok: false, text: snap.message })
+      const result = await runGoogleCalendarSync()
+      if (!result.ok) {
+        setToast({ ok: false, text: result.message })
         return
       }
-      setToast({ ok: true, text: snap.message })
+      setToast({ ok: true, text: result.message || 'カレンダーを確認しました' })
     } catch (e) {
       setToast({ ok: false, text: e instanceof Error ? e.message : '同期に失敗しました' })
     } finally {
@@ -125,7 +125,7 @@ export default function GoogleCalendarSettingsPage() {
       <h1 className="text-xl font-bold text-gray-900 mb-1">Google カレンダー同期</h1>
       <p className="text-sm text-gray-500 mb-6">
         予約済みのレッスン（生徒が紐づいている枠）を、お使いの Google カレンダーに反映します。
-        連携済みの場合、サーバー保存の約4秒後に自動同期されます（画面右下に結果が表示されます）。
+        連携済みの場合、画面の「サーバーに保存」を押すと同時にカレンダーへも反映されます。
       </p>
 
       {noSupabase && (

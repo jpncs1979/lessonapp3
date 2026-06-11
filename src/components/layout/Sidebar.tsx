@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { Calendar, Settings, LogOut, Music, BarChart3, RefreshCw } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { cn, getRoleLabel, getRoleColor, getInitials } from '@/lib/utils'
+import SaveToServerPanel from '@/components/layout/SaveToServerPanel'
 
 export default function Sidebar() {
   const pathname = usePathname()
@@ -26,7 +27,6 @@ export default function Sidebar() {
     <>
       {/* デスクトップサイドバー */}
       <aside className="hidden md:flex flex-col w-56 min-h-screen bg-white border-r border-gray-200 fixed left-0 top-0 z-40">
-        {/* ロゴ */}
         <div className="px-5 py-5 border-b border-gray-100">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
@@ -36,8 +36,7 @@ export default function Sidebar() {
           </div>
         </div>
 
-        {/* ナビ */}
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {allNavItems.map((item) => {
             const active = pathname.startsWith(item.href)
             return (
@@ -58,8 +57,7 @@ export default function Sidebar() {
           })}
         </nav>
 
-        {/* ユーザー情報 */}
-        <div className="px-3 py-4 border-t border-gray-100">
+        <div className="px-3 py-4 border-t border-gray-100 space-y-2 mt-auto">
           <div className="flex items-center gap-3 px-3 py-2 rounded-lg">
             <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 font-semibold text-xs flex-shrink-0">
               {getInitials(currentUser.name)}
@@ -71,6 +69,9 @@ export default function Sidebar() {
               </span>
             </div>
           </div>
+
+          {isTeacher && <SaveToServerPanel />}
+
           {isStudentOrAccompanist && (
             <button
               type="button"
@@ -81,19 +82,27 @@ export default function Sidebar() {
               最新に更新
             </button>
           )}
+
           <button
             onClick={async () => {
               const supabase = (await import('@/lib/supabase/client')).createSupabaseClient()
               if (supabase) (await import('@/lib/supabase/sync')).signOutSupabase(supabase)
               dispatch({ type: 'LOGOUT' })
             }}
-            className="mt-1 flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
           >
             <LogOut size={14} />
             ログアウト
           </button>
         </div>
       </aside>
+
+      {/* モバイル: 左メニューがないため、下部ナビの上に保存パネル */}
+      {isTeacher && (
+        <div className="md:hidden fixed bottom-14 left-0 right-0 z-40 px-3 py-2 bg-white/95 border-t border-gray-200 backdrop-blur-sm">
+          <SaveToServerPanel />
+        </div>
+      )}
 
       {/* モバイル下部ナビ */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 flex">

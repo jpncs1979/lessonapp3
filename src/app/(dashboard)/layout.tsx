@@ -4,7 +4,6 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useApp } from '@/lib/store'
 import Sidebar from '@/components/layout/Sidebar'
-import SyncStatusBar from '@/components/layout/SyncStatusBar'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -23,15 +22,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     )
   }
 
+  const isTeacherMobilePad = state.currentUser.role === 'teacher'
+
   return (
     <div className="h-dvh max-h-dvh flex flex-col overflow-hidden bg-gray-50 md:min-h-screen md:max-h-none">
       <Sidebar />
-      <main className="flex-1 min-h-0 md:pl-56 pb-16 md:pb-0 overflow-x-hidden overflow-y-auto min-w-0">
+      <main
+        className={`flex-1 min-h-0 md:pl-56 md:pb-0 overflow-x-hidden overflow-y-auto min-w-0 ${
+          isTeacherMobilePad ? 'pb-36' : 'pb-16'
+        }`}
+      >
         <div className="max-w-2xl mx-auto px-4 py-4 sm:py-6 w-full min-w-0 box-border">
           {children}
         </div>
       </main>
-      <SyncStatusBar />
     </div>
   )
 }
