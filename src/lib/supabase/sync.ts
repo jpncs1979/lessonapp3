@@ -42,7 +42,6 @@ type DbLesson = {
 }
 type DbWeeklyMaster = { day_of_week: number; slot_index: number; student_id: string }
 type DbAvailability = { id: string; slot_id: string; accompanist_id: string; created_at: string }
-type DbLessonIdRow = { id: string }
 
 /** リフレッシュトークン無効などでセッションが壊れているとき、ローカルストレージだけクリア（再ログイン可能にする） */
 export async function clearStaleSupabaseSession(
@@ -458,6 +457,56 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   return chunks
 }
 
+const SELECT_PAGE_SIZE = 1000
+
+/** PostgREST の行数上限を超える id 一覧も漏れなく取得 */
+async function fetchAllRowIds(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  table: 'lessons' | 'app_users' | 'accompanist_availabilities'
+): Promise<{ ids: string[]; error: Error | null }> {
+  const ids: string[] = []
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('id')
+      .range(from, from + SELECT_PAGE_SIZE - 1)
+    if (error) return { ids: [], error: error as unknown as Error }
+    const chunk = (data ?? []).map((r: { id: string }) => r.id)
+    ids.push(...chunk)
+    if (chunk.length < SELECT_PAGE_SIZE) break
+    from += SELECT_PAGE_SIZE
+  }
+  return { ids, error: null }
+}
+
+export const GET_SESSION_TIMEOUT_MS = 12_000
+const PERSIST_STATE_TIMEOUT_MS = 90_000
+
+/** getSession() がトークン更新でハングしたとき UI が固まらないよう上限を設ける */
+export async function getSessionWithTimeout(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  timeoutMs: number = GET_SESSION_TIMEOUT_MS
+): Promise<{ session: import('@supabase/supabase-js').Session | null; timedOut: boolean }> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      supabase.auth.getSession().then(({ data: { session }, error: sessionError }) => {
+        if (sessionError && isStaleAuthSessionError(sessionError)) {
+          void clearStaleSupabaseSession(supabase)
+          return { session: null, timedOut: false }
+        }
+        return { session, timedOut: false }
+      }),
+      new Promise<{ session: null; timedOut: true }>((resolve) => {
+        timeoutId = setTimeout(() => resolve({ session: null, timedOut: true }), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+  }
+}
+
 /**
  * lessons を安全に同期する:
  * 1) 先に upsert（追加/更新）
@@ -468,8 +517,8 @@ async function syncLessonsTable(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   lessons: LessonSlot[]
 ): Promise<{ error: Error | null }> {
-  const { data: existingLessons, error: existingErr } = await supabase.from('lessons').select('id')
-  if (existingErr) return { error: existingErr as unknown as Error }
+  const { ids: existingIds, error: existingErr } = await fetchAllRowIds(supabase, 'lessons')
+  if (existingErr) return { error: existingErr }
 
   const rows = lessons.map(toDbLessonRow)
   const UPSERT_CHUNK_SIZE = 500
@@ -477,8 +526,6 @@ async function syncLessonsTable(
     const { error } = await supabase.from('lessons').upsert(chunk, { onConflict: 'id' })
     if (error) return { error: error as unknown as Error }
   }
-
-  const existingIds = (existingLessons ?? []).map((r: DbLessonIdRow) => r.id)
   const nextIds = new Set(rows.map((r) => r.id))
   const toDelete = existingIds.filter((id) => !nextIds.has(id))
   const DELETE_CHUNK_SIZE = 500
@@ -537,9 +584,9 @@ async function syncAppUsers(
       if (error) return { error: error as unknown as Error }
     }
   }
-  const { data: existingAppUsers, error: selectErr } = await supabase.from('app_users').select('id')
-  if (selectErr) return { error: selectErr as unknown as Error }
-  const toDelete = (existingAppUsers ?? []).filter((r) => !stateUserIds.has(r.id)).map((r) => r.id)
+  const { ids: existingAppUserIds, error: selectErr } = await fetchAllRowIds(supabase, 'app_users')
+  if (selectErr) return { error: selectErr }
+  const toDelete = existingAppUserIds.filter((id) => !stateUserIds.has(id))
   for (const ids of chunkArray(toDelete, 200)) {
     const { error: delErr } = await supabase.from('app_users').delete().in('id', ids)
     if (delErr) return { error: delErr as unknown as Error }
@@ -572,11 +619,11 @@ async function syncAccompanistAvailabilities(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   availabilities: AppState['accompanistAvailabilities']
 ): Promise<{ error: Error | null }> {
-  const { data: existingAv, error: selectErr } = await supabase
-    .from('accompanist_availabilities')
-    .select('id')
-  if (selectErr) return { error: selectErr as unknown as Error }
-  const existingIds = (existingAv ?? []).map((r) => r.id)
+  const { ids: existingIds, error: selectErr } = await fetchAllRowIds(
+    supabase,
+    'accompanist_availabilities'
+  )
+  if (selectErr) return { error: selectErr }
   for (const ids of chunkArray(existingIds, 200)) {
     const { error: delErr } = await supabase.from('accompanist_availabilities').delete().in('id', ids)
     if (delErr) return { error: delErr as unknown as Error }
@@ -595,24 +642,51 @@ async function syncAccompanistAvailabilities(
   return { error: null }
 }
 
-/** 状態を Supabase に保存（テーブルごとに並列実行して高速化） */
+/** 状態を Supabase に保存（テーブルは直列。並列だと接続競合でハングしやすい） */
 export async function persistState(
   supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
   state: AppState
 ): Promise<{ error: Error | null }> {
   try {
-    const results = await Promise.all([
-      syncAppUsers(supabase, state.users),
-      syncDaySettings(supabase, state.daySettings),
-      syncLessonsTable(supabase, state.lessons),
-      persistWeeklyMasters(supabase, state.weekly_masters),
-      syncAccompanistAvailabilities(supabase, state.accompanistAvailabilities),
-    ])
-    const failed = results.find((r) => r.error)
-    if (failed?.error) return { error: failed.error }
+    const steps = [
+      () => syncAppUsers(supabase, state.users),
+      () => syncDaySettings(supabase, state.daySettings),
+      () => syncLessonsTable(supabase, state.lessons),
+      () => persistWeeklyMasters(supabase, state.weekly_masters),
+      () => syncAccompanistAvailabilities(supabase, state.accompanistAvailabilities),
+    ]
+    for (const step of steps) {
+      const result = await step()
+      if (result.error) return { error: result.error }
+    }
     return { error: null }
   } catch (e) {
     return { error: e instanceof Error ? e : new Error(String(e)) }
+  }
+}
+
+/** persistState が通信ハングで終わらないときに UI が「保存中」のまま固まらないよう上限を設ける */
+export async function persistStateWithTimeout(
+  supabase: NonNullable<ReturnType<typeof import('./client').createSupabaseClient>>,
+  state: AppState,
+  timeoutMs: number = PERSIST_STATE_TIMEOUT_MS
+): Promise<{ error: Error | null }> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<{ error: Error }>((resolve) => {
+    timeoutId = setTimeout(
+      () =>
+        resolve({
+          error: new Error(
+            'サーバーへの保存がタイムアウトしました。通信状況を確認して再度お試しください。'
+          ),
+        }),
+      timeoutMs
+    )
+  })
+  try {
+    return await Promise.race([persistState(supabase, state), timeoutPromise])
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
   }
 }
 

@@ -14,7 +14,8 @@ import {
   fetchAppUsers,
   fetchFullState,
   fetchFullStateWithTimeout,
-  persistState,
+  persistStateWithTimeout,
+  getSessionWithTimeout,
   persistLessonsOnly,
   persistAccompanistAvailabilities,
   signOutSupabase,
@@ -791,8 +792,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })
 
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
+      const { session, timedOut } = await getSessionWithTimeout(supabase)
+      if (!session && !timedOut) {
         setPersistUi((p) => ({
           ...p,
           phase: 'error',
@@ -801,7 +802,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return { ok: false, message: 'ログインセッションがありません' }
       }
 
-      const { error: persistError } = await persistState(supabase, stateRef.current)
+      const { error: persistError } = await persistStateWithTimeout(supabase, stateRef.current)
       if (persistError) {
         setPersistUi((p) => ({
           ...p,
@@ -821,6 +822,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }))
 
       return { ok: true, message: 'サーバーに保存しました' }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '保存に失敗しました'
+      setPersistUi((p) => ({
+        ...p,
+        phase: 'error',
+        errorMessage: message,
+      }))
+      return { ok: false, message }
     } finally {
       saveInFlightRef.current = false
     }
