@@ -85,14 +85,19 @@ export default function GoogleCalendarSettingsPage() {
     }
   }
 
-  const handleDisconnect = async () => {
-    if (!confirm('Google カレンダー連携を解除します。同期済みのイベントはできるだけ削除します。よろしいですか？')) return
+  const handleDisconnect = async (deleteRemoteEvents: boolean) => {
+    const message = deleteRemoteEvents
+      ? 'Google カレンダー連携を解除し、同期済みの予定をカレンダーから削除します。よろしいですか？'
+      : 'Google カレンダー連携を解除します。Google カレンダー上の予定は削除しません。よろしいですか？'
+    if (!confirm(message)) return
     setDisconnecting(true)
     setToast(null)
     try {
       const r = await fetch('/api/google-calendar/disconnect', {
         method: 'POST',
         credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deleteRemoteEvents }),
       })
       const j = (await r.json()) as { ok: boolean; error?: string }
       if (!r.ok || !j.ok) {
@@ -100,7 +105,12 @@ export default function GoogleCalendarSettingsPage() {
         return
       }
       setGoogleCalendarConnectedCache(false)
-      setToast({ ok: true, text: '連携を解除しました' })
+      setToast({
+        ok: true,
+        text: deleteRemoteEvents
+          ? '連携を解除し、同期済みの予定を削除しました'
+          : '連携を解除しました（カレンダーの予定はそのまま残っています）',
+      })
       await loadStatus()
     } catch (e) {
       setToast({ ok: false, text: e instanceof Error ? e.message : '解除に失敗しました' })
@@ -211,7 +221,7 @@ export default function GoogleCalendarSettingsPage() {
             variant="secondary"
             className="gap-2 text-red-700 border-red-100 hover:bg-red-50"
             disabled={noSupabase || !status?.connected || disconnecting}
-            onClick={() => void handleDisconnect()}
+            onClick={() => void handleDisconnect(false)}
           >
             {disconnecting ? (
               <Loader2 size={16} className="animate-spin" aria-hidden />
@@ -221,6 +231,24 @@ export default function GoogleCalendarSettingsPage() {
             連携解除
           </Button>
         </div>
+
+        <p className="text-xs text-gray-500 leading-relaxed">
+          <span className="font-medium text-gray-700">同期エラー（invalid_grant 等）が出たとき：</span>
+          「連携解除」は不要です。
+          <span className="font-medium text-indigo-700">「Google と再連携（トークン更新）」</span>
+          を押してください。カレンダー上の予定は削除されず、新しいトークンで同期を再開できます。
+        </p>
+        <p className="text-xs text-gray-500">
+          連携解除しても Google カレンダーの予定は残ります。予定もまとめて削除したい場合のみ
+          <button
+            type="button"
+            className="text-red-700 underline hover:no-underline ml-1"
+            disabled={noSupabase || !status?.connected || disconnecting}
+            onClick={() => void handleDisconnect(true)}
+          >
+            連携解除＋予定も削除
+          </button>
+        </p>
       </div>
 
       <div className="mt-6 text-xs text-gray-500 space-y-2 leading-relaxed">

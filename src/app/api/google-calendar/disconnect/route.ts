@@ -16,6 +16,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: '先生のみ実行できます' }, { status: 403 })
   }
 
+  let deleteRemoteEvents = false
+  try {
+    const j = await request.json()
+    if (j && j.deleteRemoteEvents === true) deleteRemoteEvents = true
+  } catch {
+    /* empty body */
+  }
+
   const { data: maps } = await supabase
     .from('lesson_google_calendar_events')
     .select('lesson_id, google_event_id, calendar_id')
@@ -31,7 +39,14 @@ export async function POST(request: Request) {
   const redirectUri = getGoogleOAuthRedirectUri(request.url)
 
   let remoteErrors = 0
-  if (tokenRow?.refresh_token && clientId && clientSecret && redirectUri) {
+  let remoteDeleted = 0
+  if (
+    deleteRemoteEvents &&
+    tokenRow?.refresh_token &&
+    clientId &&
+    clientSecret &&
+    redirectUri
+  ) {
     try {
       const oauth2 = createOAuth2ClientForUser({
         clientId,
@@ -47,6 +62,7 @@ export async function POST(request: Request) {
             calendarId: m.calendar_id || 'primary',
             eventId: m.google_event_id,
           })
+          remoteDeleted++
         } catch {
           remoteErrors++
         }
@@ -62,6 +78,8 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     removedMappings: maps?.length ?? 0,
+    remoteDeleted,
     remoteErrors,
+    deleteRemoteEvents,
   })
 }
