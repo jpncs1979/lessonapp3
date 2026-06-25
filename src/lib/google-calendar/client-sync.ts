@@ -70,6 +70,7 @@ type SyncApiResponse = {
   created?: number
   updated?: number
   deleted?: number
+  linked?: number
   errors?: string[]
   error?: string
   complete?: boolean
@@ -81,7 +82,13 @@ type SyncApiResponse = {
 }
 
 function formatSyncMessage(
-  totals: { created: number; updated: number; deleted: number; skippedUnchanged: number },
+  totals: {
+    created: number
+    updated: number
+    deleted: number
+    linked: number
+    skippedUnchanged: number
+  },
   errors?: string[]
 ): string {
   if (errors?.length) return errors.join('; ')
@@ -89,6 +96,7 @@ function formatSyncMessage(
     totals.created ? `新規 ${totals.created}` : '',
     totals.updated ? `更新 ${totals.updated}` : '',
     totals.deleted ? `削除 ${totals.deleted}` : '',
+    totals.linked ? `既存と紐づけ ${totals.linked}` : '',
   ].filter(Boolean)
   if (parts.length > 0) {
     return `カレンダー反映（${parts.join(' / ')}）`
@@ -100,7 +108,7 @@ function formatSyncMessage(
 }
 
 export async function runGoogleCalendarSync(): Promise<GoogleCalendarSyncResult> {
-  const totals = { created: 0, updated: 0, deleted: 0, skippedUnchanged: 0 }
+  const totals = { created: 0, updated: 0, deleted: 0, linked: 0, skippedUnchanged: 0 }
   const allErrors: string[] = []
   let offset = 0
 
@@ -136,6 +144,7 @@ export async function runGoogleCalendarSync(): Promise<GoogleCalendarSyncResult>
       totals.created += j.created ?? 0
       totals.updated += j.updated ?? 0
       totals.deleted += j.deleted ?? 0
+      totals.linked += j.linked ?? 0
       if (round === 0 && typeof j.skippedUnchanged === 'number') {
         totals.skippedUnchanged = j.skippedUnchanged
       }

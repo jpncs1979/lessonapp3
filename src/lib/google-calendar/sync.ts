@@ -111,7 +111,14 @@ type SyncWorkUpdate = {
   fingerprint: string
   body: EventBody
 }
-type SyncWorkItem = SyncWorkDelete | SyncWorkInsert | SyncWorkUpdate
+/** DB の対応だけ更新（Google 上の予定は触らない） */
+type SyncWorkLink = {
+  kind: 'link'
+  lesson: LessonSlot
+  map: MappingRow
+  fingerprint: string
+}
+type SyncWorkItem = SyncWorkDelete | SyncWorkInsert | SyncWorkUpdate | SyncWorkLink
 
 type EventBody = {
   summary: string
@@ -200,6 +207,8 @@ export type SyncResult = {
   created: number
   updated: number
   deleted: number
+  /** 既存の Google 予定と紐づけただけ（追加・変更なし） */
+  linked: number
   errors: string[]
 }
 
@@ -251,7 +260,13 @@ function buildSyncWorkList(
         skippedUnchanged++
         continue
       }
-      work.push({ kind: 'update', lesson, map: existing, fingerprint, body })
+      // アプリ側で内容が変わったときだけ Google を更新
+      if (existing.sync_fingerprint != null && existing.sync_fingerprint !== fingerprint) {
+        work.push({ kind: 'update', lesson, map: existing, fingerprint, body })
+      } else {
+        // 同期済みだが fingerprint 未記録 → Google は触らず DB だけ整える
+        work.push({ kind: 'link', lesson, map: existing, fingerprint })
+      }
     } else {
       work.push({ kind: 'insert', lesson, fingerprint, body })
     }
@@ -350,6 +365,46 @@ async function loadSyncContext(params: SyncChunkParams): Promise<
   }
 }
 
+async function saveLessonMapping(
+  supabase: SupabaseClient,
+  authUid: string,
+  lessonId: string,
+  googleEventId: string,
+  calendarId: string,
+  fingerprint: string
+): Promise<{ error: Error | null }> {
+  const { error } = await supabase.from('lesson_google_calendar_events').upsert(
+    {
+      auth_uid: authUid,
+      lesson_id: lessonId,
+      google_event_id: googleEventId,
+      calendar_id: calendarId,
+      sync_fingerprint: fingerprint,
+    },
+    { onConflict: 'auth_uid,lesson_id' }
+  )
+  return { error: error as unknown as Error | null }
+}
+
+/** Google カレンダー上に同じレッスン ID の予定があれば取得（再連携時の二重登録防止） */
+async function findGoogleEventByLessonId(
+  calApi: ReturnType<typeof google.calendar>,
+  calendarId: string,
+  lessonId: string
+): Promise<{ eventId: string; calendarId: string } | null> {
+  await paceGoogleCalendarApi()
+  const res = await calApi.events.list({
+    calendarId,
+    privateExtendedProperty: [`lessonAppLessonId=${lessonId}`],
+    maxResults: 10,
+  })
+  const item = (res.data.items ?? []).find(
+    (e) => e.id && e.extendedProperties?.private?.lessonAppLessonId === lessonId
+  )
+  if (!item?.id) return null
+  return { eventId: item.id, calendarId }
+}
+
 async function processWorkItem(
   item: SyncWorkItem,
   ctx: {
@@ -398,6 +453,23 @@ async function processWorkItem(
     return
   }
 
+  if (item.kind === 'link') {
+    const { error: linkErr } = await saveLessonMapping(
+      supabase,
+      authUid,
+      item.lesson.id,
+      item.map.google_event_id,
+      item.map.calendar_id || targetCalendarId,
+      item.fingerprint
+    )
+    if (linkErr) {
+      result.errors.push(`紐づけ ${item.lesson.id}: ${linkErr.message}`)
+      return
+    }
+    result.linked++
+    return
+  }
+
   const { lesson, body, fingerprint } = item
 
   if (item.kind === 'update') {
@@ -409,14 +481,36 @@ async function processWorkItem(
         requestBody: body,
       })
       result.updated++
-      await supabase
-        .from('lesson_google_calendar_events')
-        .update({ sync_fingerprint: fingerprint } as Record<string, string>)
-        .eq('auth_uid', authUid)
-        .eq('lesson_id', lesson.id)
+      await saveLessonMapping(
+        supabase,
+        authUid,
+        lesson.id,
+        item.map.google_event_id,
+        item.map.calendar_id || targetCalendarId,
+        fingerprint
+      )
     } catch (e: unknown) {
       await handleApiError(e, '更新', lesson.id)
     }
+    return
+  }
+
+  // 新規扱いでも、Google 上に同じレッスン ID の予定があれば追加せず紐づけるだけ
+  const existingOnGoogle = await findGoogleEventByLessonId(calApi, targetCalendarId, lesson.id)
+  if (existingOnGoogle) {
+    const { error: linkErr } = await saveLessonMapping(
+      supabase,
+      authUid,
+      lesson.id,
+      existingOnGoogle.eventId,
+      existingOnGoogle.calendarId,
+      fingerprint
+    )
+    if (linkErr) {
+      result.errors.push(`紐づけ ${lesson.id}: ${linkErr.message}`)
+      return
+    }
+    result.linked++
     return
   }
 
@@ -431,15 +525,13 @@ async function processWorkItem(
       result.errors.push(`作成失敗: ${lesson.id}`)
       return
     }
-    const { error: insErr } = await supabase.from('lesson_google_calendar_events').upsert(
-      {
-        auth_uid: authUid,
-        lesson_id: lesson.id,
-        google_event_id: eventId,
-        calendar_id: targetCalendarId,
-        sync_fingerprint: fingerprint,
-      },
-      { onConflict: 'auth_uid,lesson_id' }
+    const { error: insErr } = await saveLessonMapping(
+      supabase,
+      authUid,
+      lesson.id,
+      eventId,
+      targetCalendarId,
+      fingerprint
     )
     if (insErr) {
       result.errors.push(`DB保存 ${lesson.id}: ${insErr.message}`)
@@ -470,6 +562,7 @@ export async function syncLessonsToGoogleCalendarChunk(
       created: 0,
       updated: 0,
       deleted: 0,
+      linked: 0,
       errors: [loaded.error],
       complete: true,
       nextOffset: 0,
@@ -488,6 +581,7 @@ export async function syncLessonsToGoogleCalendarChunk(
         created: 0,
         updated: 0,
         deleted: 0,
+        linked: 0,
         errors: [authError],
         complete: true,
         nextOffset: 0,
@@ -500,7 +594,7 @@ export async function syncLessonsToGoogleCalendarChunk(
   }
 
   const slice = work.slice(offset, offset + limit)
-  const result: SyncResult = { created: 0, updated: 0, deleted: 0, errors: [] }
+  const result: SyncResult = { created: 0, updated: 0, deleted: 0, linked: 0, errors: [] }
   const abort = { reason: null as string | null }
 
   for (const item of slice) {
@@ -538,13 +632,14 @@ export async function syncLessonsToGoogleCalendarChunk(
 /** 全チャンクをサーバー側で連続実行（API ルートからは使わない） */
 export async function syncLessonsToGoogleCalendar(params: SyncChunkParams): Promise<SyncResult> {
   let offset = 0
-  const total: SyncResult = { created: 0, updated: 0, deleted: 0, errors: [] }
+  const total: SyncResult = { created: 0, updated: 0, deleted: 0, linked: 0, errors: [] }
 
   for (;;) {
     const chunk = await syncLessonsToGoogleCalendarChunk({ ...params, offset, limit: 25 })
     total.created += chunk.created
     total.updated += chunk.updated
     total.deleted += chunk.deleted
+    total.linked += chunk.linked
     total.errors.push(...chunk.errors)
     if (chunk.complete) break
     offset = chunk.nextOffset

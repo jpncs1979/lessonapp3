@@ -236,7 +236,7 @@ export default function GoogleCalendarSettingsPage() {
           <span className="font-medium text-gray-700">同期エラー（invalid_grant 等）が出たとき：</span>
           「連携解除」は不要です。
           <span className="font-medium text-indigo-700">「Google と再連携（トークン更新）」</span>
-          を押してください。カレンダー上の予定は削除されず、新しいトークンで同期を再開できます。
+          を押してください。カレンダー上の予定は削除されず、既にある予定は二重登録せず紐づけ直します。
         </p>
         <p className="text-xs text-gray-500">
           連携解除しても Google カレンダーの予定は残ります。予定もまとめて削除したい場合のみ

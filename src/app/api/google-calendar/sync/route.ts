@@ -81,6 +81,7 @@ export async function POST(request: Request) {
     created: result.created,
     updated: result.updated,
     deleted: result.deleted,
+    linked: result.linked,
     errors: result.errors,
     complete: result.complete,
     nextOffset: result.nextOffset,

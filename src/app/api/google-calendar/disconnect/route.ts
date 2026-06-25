@@ -72,12 +72,15 @@ export async function POST(request: Request) {
     }
   }
 
-  await supabase.from('lesson_google_calendar_events').delete().eq('auth_uid', teacher.authUid)
   await supabase.from('teacher_google_calendar').delete().eq('auth_uid', teacher.authUid)
+  if (deleteRemoteEvents) {
+    await supabase.from('lesson_google_calendar_events').delete().eq('auth_uid', teacher.authUid)
+  }
 
   return NextResponse.json({
     ok: true,
-    removedMappings: maps?.length ?? 0,
+    removedMappings: deleteRemoteEvents ? (maps?.length ?? 0) : 0,
+    keptMappings: deleteRemoteEvents ? 0 : (maps?.length ?? 0),
     remoteDeleted,
     remoteErrors,
     deleteRemoteEvents,
