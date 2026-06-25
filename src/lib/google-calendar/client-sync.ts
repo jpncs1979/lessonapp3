@@ -13,6 +13,15 @@ const STATUS_FETCH_TIMEOUT_MS = 12_000
 const CHUNK_FETCH_TIMEOUT_MS = 55_000
 const DEFAULT_CHUNK_SIZE = 25
 
+/** ブラウザのローカル日付（同期ボタンを押した日） */
+function getLocalSyncFromDate(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 export function getGoogleCalendarConnectedCache(): boolean | null {
   if (typeof window === 'undefined') return null
   try {
@@ -79,6 +88,7 @@ type SyncApiResponse = {
   processed?: number
   skippedUnchanged?: number
   needsReconnect?: boolean
+  syncFromDate?: string
 }
 
 function formatSyncMessage(
@@ -111,6 +121,7 @@ export async function runGoogleCalendarSync(): Promise<GoogleCalendarSyncResult>
   const totals = { created: 0, updated: 0, deleted: 0, linked: 0, skippedUnchanged: 0 }
   const allErrors: string[] = []
   let offset = 0
+  const syncFromDate = getLocalSyncFromDate()
 
   try {
     for (let round = 0; round < 500; round++) {
@@ -120,7 +131,7 @@ export async function runGoogleCalendarSync(): Promise<GoogleCalendarSyncResult>
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ offset, limit: DEFAULT_CHUNK_SIZE }),
+          body: JSON.stringify({ offset, limit: DEFAULT_CHUNK_SIZE, syncFromDate }),
         },
         CHUNK_FETCH_TIMEOUT_MS
       )

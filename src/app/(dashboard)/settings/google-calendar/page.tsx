@@ -136,6 +136,7 @@ export default function GoogleCalendarSettingsPage() {
       <p className="text-sm text-gray-500 mb-6">
         予約済みのレッスン（生徒が紐づいている枠）を、お使いの Google カレンダーに反映します。
         連携済みの場合、左メニューの「カレンダー同期」ボタンで反映します（サーバー保存とは別です）。
+        同期は<strong className="font-medium text-gray-700">ボタンを押した日以降</strong>のレッスンのみが対象で、それより前の予定は変更しません。
       </p>
 
       {noSupabase && (

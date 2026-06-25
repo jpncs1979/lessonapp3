@@ -47,12 +47,16 @@ export async function POST(request: Request) {
   let bodyCalendarId: string | undefined
   let offset = 0
   let limit = 25
+  let syncFromDate: string | undefined
   try {
     const j = await request.json()
     if (j && typeof j.calendarId === 'string') bodyCalendarId = j.calendarId
     if (j && typeof j.offset === 'number' && Number.isFinite(j.offset)) offset = Math.max(0, j.offset)
     if (j && typeof j.limit === 'number' && Number.isFinite(j.limit)) {
       limit = Math.min(50, Math.max(1, j.limit))
+    }
+    if (j && typeof j.syncFromDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(j.syncFromDate)) {
+      syncFromDate = j.syncFromDate
     }
   } catch {
     /* empty body */
@@ -73,6 +77,7 @@ export async function POST(request: Request) {
     calendarId: bodyCalendarId,
     offset,
     limit,
+    syncFromDate,
   })
 
   const ok = result.errors.length === 0
@@ -89,5 +94,6 @@ export async function POST(request: Request) {
     processed: result.processed,
     skippedUnchanged: result.skippedUnchanged,
     needsReconnect: result.needsReconnect,
+    syncFromDate: result.syncFromDate,
   })
 }

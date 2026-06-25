@@ -5,6 +5,15 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { LessonSlot } from '@/types'
 import { normalizePendingToConfirmed } from '@/lib/utils'
 
+/** 同期対象の開始日（この日付以降のレッスンのみ。日本時間の今日） */
+export function getGoogleSyncFromDate(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(new Date())
+}
+
+function isLessonInSyncScope(lessonDate: string, syncFromDate: string): boolean {
+  return lessonDate >= syncFromDate
+}
+
 /** Calendar API のレート制限対策（チャンク内は短め） */
 const GOOGLE_CALENDAR_MIN_INTERVAL_MS = Math.max(
   120,
@@ -219,6 +228,8 @@ export type SyncChunkResult = SyncResult & {
   processed: number
   skippedUnchanged: number
   needsReconnect?: boolean
+  /** 今回の同期で対象にした開始日 */
+  syncFromDate: string
 }
 
 export type SyncChunkParams = {
@@ -229,24 +240,31 @@ export type SyncChunkParams = {
   calendarId?: string
   offset?: number
   limit?: number
+  /** 同期ボタン押下日（YYYY-MM-DD）。この日以降のレッスンのみ対象 */
+  syncFromDate?: string
 }
 
 function buildSyncWorkList(
   lessons: LessonSlot[],
   mappings: Map<string, MappingRow>,
-  nameById: Map<string, string>
+  nameById: Map<string, string>,
+  syncFromDate: string,
+  lessonDateById: Map<string, string>
 ): { work: SyncWorkItem[]; skippedUnchanged: number } {
-  const currentIds = new Set(lessons.map((l) => l.id))
+  const lessonsInScope = lessons.filter((l) => isLessonInSyncScope(l.date, syncFromDate))
+  const currentIds = new Set(lessonsInScope.map((l) => l.id))
   const work: SyncWorkItem[] = []
   let skippedUnchanged = 0
 
   for (const [lessonId, map] of mappings.entries()) {
+    const lessonDate = lessonDateById.get(lessonId)
+    if (!lessonDate || !isLessonInSyncScope(lessonDate, syncFromDate)) continue
     if (!currentIds.has(lessonId)) {
       work.push({ kind: 'delete', lessonId, map })
     }
   }
 
-  for (const lesson of lessons) {
+  for (const lesson of lessonsInScope) {
     const names = {
       student: lesson.studentId ? nameById.get(lesson.studentId) : undefined,
       accompanist: lesson.accompanistId ? nameById.get(lesson.accompanistId) : undefined,
@@ -284,10 +302,15 @@ async function loadSyncContext(params: SyncChunkParams): Promise<
       skippedUnchanged: number
       authUid: string
       supabase: SupabaseClient
+      syncFromDate: string
     }
 > {
   const { supabase, oauth2, authUid, teacherId } = params
   const calendarId = params.calendarId ?? 'primary'
+  const syncFromDate =
+    params.syncFromDate && /^\d{4}-\d{2}-\d{2}$/.test(params.syncFromDate)
+      ? params.syncFromDate
+      : getGoogleSyncFromDate()
 
   const { data: tokenRow } = await supabase
     .from('teacher_google_calendar')
@@ -313,6 +336,15 @@ async function loadSyncContext(params: SyncChunkParams): Promise<
   const lessons = normalizePendingToConfirmed(
     (lessonRows ?? []).map((r) => toLessonSlot(r as DbLesson))
   ).filter(shouldSyncLesson)
+
+  const lessonDateById = new Map<string, string>()
+  for (const l of lessons) {
+    lessonDateById.set(l.id, l.date)
+  }
+  for (const r of lessonRows ?? []) {
+    const row = r as DbLesson
+    if (!lessonDateById.has(row.id)) lessonDateById.set(row.id, row.date)
+  }
 
   let mapRows: MappingRow[] | null = null
   let mapErr: { message: string } | null = null
@@ -353,7 +385,13 @@ async function loadSyncContext(params: SyncChunkParams): Promise<
     nameById.set(u.id, u.name)
   }
 
-  const { work, skippedUnchanged } = buildSyncWorkList(lessons, mappings, nameById)
+  const { work, skippedUnchanged } = buildSyncWorkList(
+    lessons,
+    mappings,
+    nameById,
+    syncFromDate,
+    lessonDateById
+  )
 
   return {
     targetCalendarId,
@@ -362,6 +400,7 @@ async function loadSyncContext(params: SyncChunkParams): Promise<
     skippedUnchanged,
     authUid,
     supabase,
+    syncFromDate,
   }
 }
 
@@ -569,10 +608,11 @@ export async function syncLessonsToGoogleCalendarChunk(
       totalWork: 0,
       processed: 0,
       skippedUnchanged: 0,
+      syncFromDate: params.syncFromDate ?? getGoogleSyncFromDate(),
     }
   }
 
-  const { work, skippedUnchanged, calApi, targetCalendarId, authUid, supabase } = loaded
+  const { work, skippedUnchanged, calApi, targetCalendarId, authUid, supabase, syncFromDate } = loaded
 
   if (offset === 0) {
     const authError = await verifyGoogleOAuthAccess(params.oauth2, supabase, authUid)
@@ -589,6 +629,7 @@ export async function syncLessonsToGoogleCalendarChunk(
         processed: 0,
         skippedUnchanged,
         needsReconnect: authError === GOOGLE_CALENDAR_INVALID_GRANT_MESSAGE,
+        syncFromDate,
       }
     }
   }
@@ -613,6 +654,7 @@ export async function syncLessonsToGoogleCalendarChunk(
       processed: work.length,
       skippedUnchanged,
       needsReconnect: true,
+      syncFromDate,
     }
   }
 
@@ -626,6 +668,7 @@ export async function syncLessonsToGoogleCalendarChunk(
     totalWork: work.length,
     processed,
     skippedUnchanged,
+    syncFromDate,
   }
 }
 
