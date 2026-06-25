@@ -1,13 +1,14 @@
+import { createHash } from 'crypto'
 import { google } from 'googleapis'
 import { OAuth2Client } from 'google-auth-library'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { LessonSlot } from '@/types'
 import { normalizePendingToConfirmed } from '@/lib/utils'
 
-/** Calendar API は「ユーザーあたり1分のクエリ数」制限があるため、呼び出しの間隔を空ける */
+/** Calendar API のレート制限対策（チャンク内は短め） */
 const GOOGLE_CALENDAR_MIN_INTERVAL_MS = Math.max(
-  400,
-  Number(process.env.GOOGLE_CALENDAR_SYNC_INTERVAL_MS) || 700
+  120,
+  Number(process.env.GOOGLE_CALENDAR_SYNC_INTERVAL_MS) || 200
 )
 
 let lastGoogleCalendarApiAt = 0
@@ -33,7 +34,7 @@ function dedupeCalendarErrors(errors: string[]): string[] {
   const rest = errors.filter((e) => !isGoogleCalendarQuotaError(e))
   return [
     ...rest,
-    'Google Calendar API の1分あたりの呼び出し上限に達しました。1〜2分待ってから「今すぐ同期」を再度お試しください。',
+    'Google Calendar API の1分あたりの呼び出し上限に達しました。1〜2分待ってから再度お試しください。',
   ]
 }
 
@@ -50,7 +51,31 @@ type DbLesson = {
   note: string | null
 }
 
-type MappingRow = { lesson_id: string; google_event_id: string; calendar_id: string }
+type MappingRow = {
+  lesson_id: string
+  google_event_id: string
+  calendar_id: string
+  sync_fingerprint?: string | null
+}
+
+type SyncWorkDelete = { kind: 'delete'; lessonId: string; map: MappingRow }
+type SyncWorkInsert = { kind: 'insert'; lesson: LessonSlot; fingerprint: string; body: EventBody }
+type SyncWorkUpdate = {
+  kind: 'update'
+  lesson: LessonSlot
+  map: MappingRow
+  fingerprint: string
+  body: EventBody
+}
+type SyncWorkItem = SyncWorkDelete | SyncWorkInsert | SyncWorkUpdate
+
+type EventBody = {
+  summary: string
+  description: string
+  start: { dateTime: string; timeZone: string }
+  end: { dateTime: string; timeZone: string }
+  extendedProperties: { private: { lessonAppLessonId: string; lessonAppTeacherId: string } }
+}
 
 function shouldSyncLesson(l: LessonSlot): boolean {
   if (!l.studentId) return false
@@ -95,6 +120,38 @@ function buildDescription(lesson: LessonSlot): string {
   return lines.join('\n')
 }
 
+function buildEventBody(
+  lesson: LessonSlot,
+  names: { student?: string; accompanist?: string }
+): EventBody {
+  return {
+    summary: buildSummary(lesson, names),
+    description: buildDescription(lesson),
+    start: {
+      dateTime: buildDateTime(lesson.date, lesson.startTime),
+      timeZone: 'Asia/Tokyo',
+    },
+    end: {
+      dateTime: buildDateTime(lesson.date, lesson.endTime),
+      timeZone: 'Asia/Tokyo',
+    },
+    extendedProperties: {
+      private: {
+        lessonAppLessonId: lesson.id,
+        lessonAppTeacherId: lesson.teacherId,
+      },
+    },
+  }
+}
+
+export function lessonSyncFingerprint(
+  lesson: LessonSlot,
+  names: { student?: string; accompanist?: string }
+): string {
+  const body = buildEventBody(lesson, names)
+  return createHash('sha256').update(JSON.stringify(body)).digest('hex')
+}
+
 export type SyncResult = {
   created: number
   updated: number
@@ -102,13 +159,73 @@ export type SyncResult = {
   errors: string[]
 }
 
-export async function syncLessonsToGoogleCalendar(params: {
+export type SyncChunkResult = SyncResult & {
+  complete: boolean
+  nextOffset: number
+  totalWork: number
+  processed: number
+  skippedUnchanged: number
+}
+
+export type SyncChunkParams = {
   supabase: SupabaseClient
   oauth2: OAuth2Client
   authUid: string
   teacherId: string
   calendarId?: string
-}): Promise<SyncResult> {
+  offset?: number
+  limit?: number
+}
+
+function buildSyncWorkList(
+  lessons: LessonSlot[],
+  mappings: Map<string, MappingRow>,
+  nameById: Map<string, string>
+): { work: SyncWorkItem[]; skippedUnchanged: number } {
+  const currentIds = new Set(lessons.map((l) => l.id))
+  const work: SyncWorkItem[] = []
+  let skippedUnchanged = 0
+
+  for (const [lessonId, map] of mappings.entries()) {
+    if (!currentIds.has(lessonId)) {
+      work.push({ kind: 'delete', lessonId, map })
+    }
+  }
+
+  for (const lesson of lessons) {
+    const names = {
+      student: lesson.studentId ? nameById.get(lesson.studentId) : undefined,
+      accompanist: lesson.accompanistId ? nameById.get(lesson.accompanistId) : undefined,
+    }
+    const fingerprint = lessonSyncFingerprint(lesson, names)
+    const body = buildEventBody(lesson, names)
+    const existing = mappings.get(lesson.id)
+
+    if (existing) {
+      if (existing.sync_fingerprint === fingerprint) {
+        skippedUnchanged++
+        continue
+      }
+      work.push({ kind: 'update', lesson, map: existing, fingerprint, body })
+    } else {
+      work.push({ kind: 'insert', lesson, fingerprint, body })
+    }
+  }
+
+  return { work, skippedUnchanged }
+}
+
+async function loadSyncContext(params: SyncChunkParams): Promise<
+  | { error: string }
+  | {
+      targetCalendarId: string
+      calApi: ReturnType<typeof google.calendar>
+      work: SyncWorkItem[]
+      skippedUnchanged: number
+      authUid: string
+      supabase: SupabaseClient
+    }
+> {
   const { supabase, oauth2, authUid, teacherId } = params
   const calendarId = params.calendarId ?? 'primary'
 
@@ -119,7 +236,7 @@ export async function syncLessonsToGoogleCalendar(params: {
     .maybeSingle()
 
   if (!tokenRow?.refresh_token) {
-    return { created: 0, updated: 0, deleted: 0, errors: ['Google カレンダーが未連携です'] }
+    return { error: 'Google カレンダーが未連携です' }
   }
 
   const targetCalendarId = tokenRow.calendar_id || calendarId
@@ -130,20 +247,34 @@ export async function syncLessonsToGoogleCalendar(params: {
     .eq('teacher_id', teacherId)
 
   if (lessonsError) {
-    return { created: 0, updated: 0, deleted: 0, errors: [lessonsError.message] }
+    return { error: lessonsError.message }
   }
 
   const lessons = normalizePendingToConfirmed(
     (lessonRows ?? []).map((r) => toLessonSlot(r as DbLesson))
   ).filter(shouldSyncLesson)
 
-  const { data: mapRows, error: mapErr } = await supabase
-    .from('lesson_google_calendar_events')
-    .select('lesson_id, google_event_id, calendar_id')
-    .eq('auth_uid', authUid)
+  let mapRows: MappingRow[] | null = null
+  let mapErr: { message: string } | null = null
+  {
+    const res = await supabase
+      .from('lesson_google_calendar_events')
+      .select('lesson_id, google_event_id, calendar_id, sync_fingerprint')
+      .eq('auth_uid', authUid)
+    mapRows = res.data as MappingRow[] | null
+    mapErr = res.error as { message: string } | null
+  }
+  if (mapErr && /sync_fingerprint|column/i.test(mapErr.message)) {
+    const res = await supabase
+      .from('lesson_google_calendar_events')
+      .select('lesson_id, google_event_id, calendar_id')
+      .eq('auth_uid', authUid)
+    mapRows = res.data as MappingRow[] | null
+    mapErr = res.error as { message: string } | null
+  }
 
   if (mapErr) {
-    return { created: 0, updated: 0, deleted: 0, errors: [mapErr.message] }
+    return { error: mapErr.message }
   }
 
   const mappings = new Map<string, MappingRow>()
@@ -152,6 +283,7 @@ export async function syncLessonsToGoogleCalendar(params: {
       lesson_id: r.lesson_id,
       google_event_id: r.google_event_id,
       calendar_id: r.calendar_id,
+      sync_fingerprint: r.sync_fingerprint ?? null,
     })
   }
 
@@ -161,110 +293,175 @@ export async function syncLessonsToGoogleCalendar(params: {
     nameById.set(u.id, u.name)
   }
 
-  const calApi = google.calendar({ version: 'v3', auth: oauth2 })
-  const result: SyncResult = { created: 0, updated: 0, deleted: 0, errors: [] }
+  const { work, skippedUnchanged } = buildSyncWorkList(lessons, mappings, nameById)
 
-  const currentIds = new Set(lessons.map((l) => l.id))
+  return {
+    targetCalendarId,
+    calApi: google.calendar({ version: 'v3', auth: oauth2 }),
+    work,
+    skippedUnchanged,
+    authUid,
+    supabase,
+  }
+}
 
-  for (const [lessonId, map] of [...mappings.entries()]) {
-    if (currentIds.has(lessonId)) continue
+async function processWorkItem(
+  item: SyncWorkItem,
+  ctx: {
+    calApi: ReturnType<typeof google.calendar>
+    targetCalendarId: string
+    authUid: string
+    supabase: SupabaseClient
+  },
+  result: SyncResult
+): Promise<void> {
+  const { calApi, targetCalendarId, authUid, supabase } = ctx
+
+  if (item.kind === 'delete') {
     try {
       await paceGoogleCalendarApi()
       await calApi.events.delete({
-        calendarId: map.calendar_id || targetCalendarId,
-        eventId: map.google_event_id,
+        calendarId: item.map.calendar_id || targetCalendarId,
+        eventId: item.map.google_event_id,
       })
       result.deleted++
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       if (!/404|Not Found|deleted/i.test(msg)) {
-        result.errors.push(`削除 ${lessonId}: ${msg}`)
+        result.errors.push(`削除 ${item.lessonId}: ${msg}`)
       }
     }
     await supabase
       .from('lesson_google_calendar_events')
       .delete()
       .eq('auth_uid', authUid)
-      .eq('lesson_id', lessonId)
+      .eq('lesson_id', item.lessonId)
+    return
   }
 
-  for (const lesson of lessons) {
-    const names = {
-      student: lesson.studentId ? nameById.get(lesson.studentId) : undefined,
-      accompanist: lesson.accompanistId ? nameById.get(lesson.accompanistId) : undefined,
-    }
-    const body = {
-      summary: buildSummary(lesson, names),
-      description: buildDescription(lesson),
-      start: {
-        dateTime: buildDateTime(lesson.date, lesson.startTime),
-        timeZone: 'Asia/Tokyo',
-      },
-      end: {
-        dateTime: buildDateTime(lesson.date, lesson.endTime),
-        timeZone: 'Asia/Tokyo',
-      },
-      extendedProperties: {
-        private: {
-          lessonAppLessonId: lesson.id,
-          lessonAppTeacherId: lesson.teacherId,
-        },
-      },
-    }
+  const { lesson, body, fingerprint } = item
 
-    const existing = mappings.get(lesson.id)
+  if (item.kind === 'update') {
     try {
-      if (existing) {
-        await paceGoogleCalendarApi()
-        await calApi.events.patch({
-          calendarId: existing.calendar_id || targetCalendarId,
-          eventId: existing.google_event_id,
-          requestBody: body,
-        })
-        result.updated++
-      } else {
-        await paceGoogleCalendarApi()
-        const inserted = await calApi.events.insert({
-          calendarId: targetCalendarId,
-          requestBody: body,
-        })
-        const eventId = inserted.data.id
-        if (!eventId) {
-          result.errors.push(`作成失敗: ${lesson.id}`)
-          continue
-        }
-        const { error: insErr } = await supabase.from('lesson_google_calendar_events').insert({
-          auth_uid: authUid,
-          lesson_id: lesson.id,
-          google_event_id: eventId,
-          calendar_id: targetCalendarId,
-        })
-        if (insErr) {
-          result.errors.push(`DB保存 ${lesson.id}: ${insErr.message}`)
-          try {
-            await paceGoogleCalendarApi()
-            await calApi.events.delete({ calendarId: targetCalendarId, eventId })
-          } catch {
-            /* ignore */
-          }
-          continue
-        }
-        mappings.set(lesson.id, {
-          lesson_id: lesson.id,
-          google_event_id: eventId,
-          calendar_id: targetCalendarId,
-        })
-        result.created++
-      }
+      await paceGoogleCalendarApi()
+      await calApi.events.patch({
+        calendarId: item.map.calendar_id || targetCalendarId,
+        eventId: item.map.google_event_id,
+        requestBody: body,
+      })
+      result.updated++
+      await supabase
+        .from('lesson_google_calendar_events')
+        .update({ sync_fingerprint: fingerprint } as Record<string, string>)
+        .eq('auth_uid', authUid)
+        .eq('lesson_id', lesson.id)
     } catch (e: unknown) {
       result.errors.push(
-        `${existing ? '更新' : '作成'} ${lesson.id}: ${e instanceof Error ? e.message : String(e)}`
+        `更新 ${lesson.id}: ${e instanceof Error ? e.message : String(e)}`
       )
+    }
+    return
+  }
+
+  try {
+    await paceGoogleCalendarApi()
+    const inserted = await calApi.events.insert({
+      calendarId: targetCalendarId,
+      requestBody: body,
+    })
+    const eventId = inserted.data.id
+    if (!eventId) {
+      result.errors.push(`作成失敗: ${lesson.id}`)
+      return
+    }
+    const { error: insErr } = await supabase.from('lesson_google_calendar_events').upsert(
+      {
+        auth_uid: authUid,
+        lesson_id: lesson.id,
+        google_event_id: eventId,
+        calendar_id: targetCalendarId,
+        sync_fingerprint: fingerprint,
+      },
+      { onConflict: 'auth_uid,lesson_id' }
+    )
+    if (insErr) {
+      result.errors.push(`DB保存 ${lesson.id}: ${insErr.message}`)
+      try {
+        await paceGoogleCalendarApi()
+        await calApi.events.delete({ calendarId: targetCalendarId, eventId })
+      } catch {
+        /* ignore */
+      }
+      return
+    }
+    result.created++
+  } catch (e: unknown) {
+    result.errors.push(
+      `作成 ${lesson.id}: ${e instanceof Error ? e.message : String(e)}`
+    )
+  }
+}
+
+/** 1 チャンク分だけ同期（Vercel の実行時間制限を避ける） */
+export async function syncLessonsToGoogleCalendarChunk(
+  params: SyncChunkParams
+): Promise<SyncChunkResult> {
+  const offset = Math.max(0, params.offset ?? 0)
+  const limit = Math.min(50, Math.max(1, params.limit ?? 25))
+
+  const loaded = await loadSyncContext(params)
+  if ('error' in loaded) {
+    return {
+      created: 0,
+      updated: 0,
+      deleted: 0,
+      errors: [loaded.error],
+      complete: true,
+      nextOffset: 0,
+      totalWork: 0,
+      processed: 0,
+      skippedUnchanged: 0,
     }
   }
 
+  const { work, skippedUnchanged, calApi, targetCalendarId, authUid, supabase } = loaded
+  const slice = work.slice(offset, offset + limit)
+  const result: SyncResult = { created: 0, updated: 0, deleted: 0, errors: [] }
+
+  for (const item of slice) {
+    await processWorkItem(item, { calApi, targetCalendarId, authUid, supabase }, result)
+  }
+
+  const processed = Math.min(offset + limit, work.length)
   result.errors = dedupeCalendarErrors(result.errors)
-  return result
+
+  return {
+    ...result,
+    complete: processed >= work.length,
+    nextOffset: processed,
+    totalWork: work.length,
+    processed,
+    skippedUnchanged,
+  }
+}
+
+/** 全チャンクをサーバー側で連続実行（API ルートからは使わない） */
+export async function syncLessonsToGoogleCalendar(params: SyncChunkParams): Promise<SyncResult> {
+  let offset = 0
+  const total: SyncResult = { created: 0, updated: 0, deleted: 0, errors: [] }
+
+  for (;;) {
+    const chunk = await syncLessonsToGoogleCalendarChunk({ ...params, offset, limit: 25 })
+    total.created += chunk.created
+    total.updated += chunk.updated
+    total.deleted += chunk.deleted
+    total.errors.push(...chunk.errors)
+    if (chunk.complete) break
+    offset = chunk.nextOffset
+  }
+
+  total.errors = dedupeCalendarErrors(total.errors)
+  return total
 }
 
 export function createOAuth2ClientForUser(params: {

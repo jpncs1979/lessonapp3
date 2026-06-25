@@ -876,17 +876,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       const gcal = await runGoogleCalendarSync()
-      if (!gcal.message) {
-        const msg = 'カレンダーを確認しました（変更なし）'
-        setPersistUi((p) => ({ ...p, gcalMessage: msg }))
-        return { ok: true, message: msg }
-      }
       if (!gcal.ok) {
         setPersistUi((p) => ({ ...p, gcalMessage: gcal.message }))
         return { ok: false, message: gcal.message }
       }
       setPersistUi((p) => ({ ...p, gcalMessage: gcal.message }))
       return { ok: true, message: gcal.message }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'カレンダー同期に失敗しました'
+      setPersistUi((p) => ({ ...p, gcalMessage: message }))
+      return { ok: false, message }
     } finally {
       gcalSyncInFlightRef.current = false
       setPersistUi((p) => ({ ...p, gcalSyncing: false }))

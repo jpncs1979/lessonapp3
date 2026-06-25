@@ -2,7 +2,13 @@ import { NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { getGoogleClientConfig, getGoogleOAuthRedirectUri } from '@/lib/google-calendar/env'
 import { getTeacherSession } from '@/lib/google-calendar/teacher-session'
-import { createOAuth2ClientForUser, syncLessonsToGoogleCalendar } from '@/lib/google-calendar/sync'
+import {
+  createOAuth2ClientForUser,
+  syncLessonsToGoogleCalendarChunk,
+} from '@/lib/google-calendar/sync'
+
+/** Vercel の関数タイムアウトを延長（プランにより上限あり） */
+export const maxDuration = 60
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient()
@@ -39,9 +45,15 @@ export async function POST(request: Request) {
   }
 
   let bodyCalendarId: string | undefined
+  let offset = 0
+  let limit = 25
   try {
     const j = await request.json()
     if (j && typeof j.calendarId === 'string') bodyCalendarId = j.calendarId
+    if (j && typeof j.offset === 'number' && Number.isFinite(j.offset)) offset = Math.max(0, j.offset)
+    if (j && typeof j.limit === 'number' && Number.isFinite(j.limit)) {
+      limit = Math.min(50, Math.max(1, j.limit))
+    }
   } catch {
     /* empty body */
   }
@@ -53,12 +65,14 @@ export async function POST(request: Request) {
     refreshToken: row.refresh_token,
   })
 
-  const result = await syncLessonsToGoogleCalendar({
+  const result = await syncLessonsToGoogleCalendarChunk({
     supabase,
     oauth2,
     authUid: teacher.authUid,
     teacherId: teacher.appUserId,
     calendarId: bodyCalendarId,
+    offset,
+    limit,
   })
 
   const ok = result.errors.length === 0
@@ -68,5 +82,10 @@ export async function POST(request: Request) {
     updated: result.updated,
     deleted: result.deleted,
     errors: result.errors,
+    complete: result.complete,
+    nextOffset: result.nextOffset,
+    totalWork: result.totalWork,
+    processed: result.processed,
+    skippedUnchanged: result.skippedUnchanged,
   })
 }
