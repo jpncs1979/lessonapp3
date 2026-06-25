@@ -877,6 +877,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       const gcal = await runGoogleCalendarSync()
       if (!gcal.ok) {
+        if (/連携が無効|invalid_grant|再連携/i.test(gcal.message)) {
+          gcalConnectedRef.current = false
+        }
         setPersistUi((p) => ({ ...p, gcalMessage: gcal.message }))
         return { ok: false, message: gcal.message }
       }

@@ -87,5 +87,6 @@ export async function POST(request: Request) {
     totalWork: result.totalWork,
     processed: result.processed,
     skippedUnchanged: result.skippedUnchanged,
+    needsReconnect: result.needsReconnect,
   })
 }

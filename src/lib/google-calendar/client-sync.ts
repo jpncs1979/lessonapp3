@@ -77,6 +77,7 @@ type SyncApiResponse = {
   totalWork?: number
   processed?: number
   skippedUnchanged?: number
+  needsReconnect?: boolean
 }
 
 function formatSyncMessage(
@@ -121,6 +122,12 @@ export async function runGoogleCalendarSync(): Promise<GoogleCalendarSyncResult>
         return { ok: false, message: j.error ?? 'Google カレンダーが未連携です' }
       }
 
+      if (j.needsReconnect) {
+        setGoogleCalendarConnectedCache(false)
+        const message = j.errors?.[0] ?? 'Google カレンダー連携が無効です。設定から再連携してください。'
+        return { ok: false, message }
+      }
+
       if (!r.ok) {
         const message = j.error ?? j.errors?.join('; ') ?? 'カレンダー同期に失敗しました'
         return { ok: false, message }
@@ -132,7 +139,13 @@ export async function runGoogleCalendarSync(): Promise<GoogleCalendarSyncResult>
       if (round === 0 && typeof j.skippedUnchanged === 'number') {
         totals.skippedUnchanged = j.skippedUnchanged
       }
-      if (j.errors?.length) allErrors.push(...j.errors)
+      if (j.errors?.length) {
+        allErrors.push(...j.errors)
+        if (j.errors.some((e) => /invalid_grant|連携が無効/i.test(e))) {
+          setGoogleCalendarConnectedCache(false)
+          return { ok: false, message: j.errors[0] }
+        }
+      }
 
       if (j.complete !== false) {
         const ok = (j.ok ?? true) && allErrors.length === 0

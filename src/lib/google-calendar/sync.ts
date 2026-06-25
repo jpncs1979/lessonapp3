@@ -11,6 +11,9 @@ const GOOGLE_CALENDAR_MIN_INTERVAL_MS = Math.max(
   Number(process.env.GOOGLE_CALENDAR_SYNC_INTERVAL_MS) || 200
 )
 
+export const GOOGLE_CALENDAR_INVALID_GRANT_MESSAGE =
+  'Google カレンダー連携が無効になりました。設定画面で「連携解除」してから、再度「連携する」をお試しください。'
+
 let lastGoogleCalendarApiAt = 0
 
 export async function paceGoogleCalendarApi(): Promise<void> {
@@ -27,8 +30,49 @@ function isGoogleCalendarQuotaError(message: string): boolean {
   return /quota exceeded|Queries per minute|rateLimitExceeded|userRateLimitExceeded|429/i.test(message)
 }
 
+function isInvalidGrantError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e)
+  if (/invalid_grant/i.test(msg)) return true
+  if (typeof e === 'object' && e !== null && 'response' in e) {
+    const data = (e as { response?: { data?: { error?: string } } }).response?.data
+    if (data?.error === 'invalid_grant') return true
+  }
+  return false
+}
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+async function clearStaleGoogleCalendarAuth(
+  supabase: SupabaseClient,
+  authUid: string
+): Promise<void> {
+  await supabase.from('teacher_google_calendar').delete().eq('auth_uid', authUid)
+}
+
+async function verifyGoogleOAuthAccess(
+  oauth2: OAuth2Client,
+  supabase: SupabaseClient,
+  authUid: string
+): Promise<string | null> {
+  try {
+    await oauth2.getAccessToken()
+    return null
+  } catch (e) {
+    if (isInvalidGrantError(e)) {
+      await clearStaleGoogleCalendarAuth(supabase, authUid)
+      return GOOGLE_CALENDAR_INVALID_GRANT_MESSAGE
+    }
+    return errorMessage(e)
+  }
+}
+
 function dedupeCalendarErrors(errors: string[]): string[] {
   if (!errors.length) return errors
+  if (errors.some((e) => /invalid_grant/i.test(e))) {
+    return [GOOGLE_CALENDAR_INVALID_GRANT_MESSAGE]
+  }
   const quotaHits = errors.filter((e) => isGoogleCalendarQuotaError(e))
   if (quotaHits.length === 0) return errors
   const rest = errors.filter((e) => !isGoogleCalendarQuotaError(e))
@@ -165,6 +209,7 @@ export type SyncChunkResult = SyncResult & {
   totalWork: number
   processed: number
   skippedUnchanged: number
+  needsReconnect?: boolean
 }
 
 export type SyncChunkParams = {
@@ -312,10 +357,24 @@ async function processWorkItem(
     targetCalendarId: string
     authUid: string
     supabase: SupabaseClient
+    abort: { reason: string | null }
   },
   result: SyncResult
 ): Promise<void> {
-  const { calApi, targetCalendarId, authUid, supabase } = ctx
+  if (ctx.abort.reason) return
+
+  const { calApi, targetCalendarId, authUid, supabase, abort } = ctx
+
+  const handleApiError = async (e: unknown, label: string, id: string) => {
+    if (isInvalidGrantError(e)) {
+      abort.reason = GOOGLE_CALENDAR_INVALID_GRANT_MESSAGE
+      return
+    }
+    const msg = errorMessage(e)
+    if (!/404|Not Found|deleted/i.test(msg)) {
+      result.errors.push(`${label} ${id}: ${msg}`)
+    }
+  }
 
   if (item.kind === 'delete') {
     try {
@@ -326,16 +385,16 @@ async function processWorkItem(
       })
       result.deleted++
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (!/404|Not Found|deleted/i.test(msg)) {
-        result.errors.push(`削除 ${item.lessonId}: ${msg}`)
-      }
+      await handleApiError(e, '削除', item.lessonId)
+      if (abort.reason) return
     }
-    await supabase
-      .from('lesson_google_calendar_events')
-      .delete()
-      .eq('auth_uid', authUid)
-      .eq('lesson_id', item.lessonId)
+    if (!abort.reason) {
+      await supabase
+        .from('lesson_google_calendar_events')
+        .delete()
+        .eq('auth_uid', authUid)
+        .eq('lesson_id', item.lessonId)
+    }
     return
   }
 
@@ -356,9 +415,7 @@ async function processWorkItem(
         .eq('auth_uid', authUid)
         .eq('lesson_id', lesson.id)
     } catch (e: unknown) {
-      result.errors.push(
-        `更新 ${lesson.id}: ${e instanceof Error ? e.message : String(e)}`
-      )
+      await handleApiError(e, '更新', lesson.id)
     }
     return
   }
@@ -396,9 +453,7 @@ async function processWorkItem(
     }
     result.created++
   } catch (e: unknown) {
-    result.errors.push(
-      `作成 ${lesson.id}: ${e instanceof Error ? e.message : String(e)}`
-    )
+    await handleApiError(e, '作成', lesson.id)
   }
 }
 
@@ -425,11 +480,46 @@ export async function syncLessonsToGoogleCalendarChunk(
   }
 
   const { work, skippedUnchanged, calApi, targetCalendarId, authUid, supabase } = loaded
+
+  if (offset === 0) {
+    const authError = await verifyGoogleOAuthAccess(params.oauth2, supabase, authUid)
+    if (authError) {
+      return {
+        created: 0,
+        updated: 0,
+        deleted: 0,
+        errors: [authError],
+        complete: true,
+        nextOffset: 0,
+        totalWork: work.length,
+        processed: 0,
+        skippedUnchanged,
+        needsReconnect: authError === GOOGLE_CALENDAR_INVALID_GRANT_MESSAGE,
+      }
+    }
+  }
+
   const slice = work.slice(offset, offset + limit)
   const result: SyncResult = { created: 0, updated: 0, deleted: 0, errors: [] }
+  const abort = { reason: null as string | null }
 
   for (const item of slice) {
-    await processWorkItem(item, { calApi, targetCalendarId, authUid, supabase }, result)
+    await processWorkItem(item, { calApi, targetCalendarId, authUid, supabase, abort }, result)
+    if (abort.reason) break
+  }
+
+  if (abort.reason) {
+    await clearStaleGoogleCalendarAuth(supabase, authUid)
+    result.errors = [abort.reason]
+    return {
+      ...result,
+      complete: true,
+      nextOffset: work.length,
+      totalWork: work.length,
+      processed: work.length,
+      skippedUnchanged,
+      needsReconnect: true,
+    }
   }
 
   const processed = Math.min(offset + limit, work.length)
