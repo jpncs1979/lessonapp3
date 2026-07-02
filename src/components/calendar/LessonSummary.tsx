@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useApp } from '@/lib/store'
 import { LessonSlot } from '@/types'
 import { isLessonSlotEnded } from '@/lib/schedule'
+import { getAcademicYearRange, formatAcademicYearLabel } from '@/lib/academic-year'
 import { Music } from 'lucide-react'
 import Link from 'next/link'
 
@@ -16,11 +17,16 @@ export default function LessonSummary() {
   const teacherId = users.find((u) => u.role === 'teacher')?.id
   if (!teacherId) return null
 
+  const { start: yearStart, end: yearEnd } = getAcademicYearRange()
+  const yearLabel = formatAcademicYearLabel(yearStart, yearEnd)
+
   const relevantLessons = lessons.filter(
     (l) =>
       l.teacherId === teacherId &&
       (l.status === 'confirmed' || l.status === 'pending') &&
-      getDaySettings(l.date).isLessonDay
+      getDaySettings(l.date).isLessonDay &&
+      l.date >= yearStart &&
+      l.date <= yearEnd
   ) as LessonSlot[]
 
   const counts = students.map((student) => {
@@ -51,7 +57,7 @@ export default function LessonSummary() {
       <div className="px-5 py-3 border-b border-gray-100">
         <h2 className="text-sm font-semibold text-gray-900">受講状況サマリー</h2>
         <p className="text-xs text-gray-500 mt-0.5">
-          氏名をタップするとその生徒のレッスン一覧を表示。予定＝レッスン日の予約枠、実施＝枠の終了時刻を過ぎた予定（実施しない日は集計に含みません）
+          {yearLabel}の累計（4月1日〜翌3月31日。過去年度のデータは残りますが集計には含みません）。氏名をタップするとその生徒のレッスン一覧を表示。予定＝レッスン日の予約枠、実施＝枠の終了時刻を過ぎた予定（実施しない日は集計に含みません）
         </p>
       </div>
       <div className="p-4 space-y-2">

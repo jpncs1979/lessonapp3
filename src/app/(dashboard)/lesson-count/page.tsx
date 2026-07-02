@@ -6,18 +6,8 @@ import { useApp } from '@/lib/store'
 import LessonSummary from '@/components/calendar/LessonSummary'
 import { createSupabaseClient } from '@/lib/supabase/client'
 import { getAppUserFromSession } from '@/lib/supabase/sync'
+import { getAcademicYearRange, formatAcademicYearLabel } from '@/lib/academic-year'
 import type { LessonSlot } from '@/types'
-
-/** 現在の年度（4/1〜翌3/31）の開始日・終了日 */
-function getAcademicYearRange(): { start: string; end: string } {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = now.getMonth() + 1
-  if (month >= 4) {
-    return { start: `${year}-04-01`, end: `${year + 1}-03-31` }
-  }
-  return { start: `${year - 1}-04-01`, end: `${year}-03-31` }
-}
 
 /** YYYY-MM-DD を「M月D日」に */
 function formatDateShort(dateStr: string): string {
@@ -88,7 +78,7 @@ export default function LessonCountPage() {
   const countThisMonth = lessonsThisMonth.length
   const countYear = lessonsYear.length
 
-  const yearLabel = yearStart.slice(0, 4) + '年4月〜' + yearEnd.slice(0, 4) + '年3月'
+  const yearLabel = formatAcademicYearLabel(yearStart, yearEnd)
 
   const uniqueDates = (list: LessonSlot[]) =>
     [...new Set(list.map((l) => l.date))].sort()

@@ -212,7 +212,7 @@ type Action =
   | { type: 'UPSERT_WEEKLY_MASTER'; payload: WeeklyMaster }
   | { type: 'REMOVE_WEEKLY_MASTER'; payload: { day_of_week: number; slot_index: number } }
   | { type: 'REPLACE_WEEKLY_MASTERS'; payload: WeeklyMaster[] }
-  | { type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS'; payload: { effectiveFromDate: string } }
+  | { type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS'; payload: { effectiveFromDate: string; effectiveToDate?: string } }
   | { type: 'DELETE_DATA_BEFORE_DATE'; payload: { cutoffDate: string } }
   | { type: 'GENERATE_LESSONS_FOR_DATE'; payload: { date: string; daySettings: DaySettings; openAsAllAvailable?: boolean } }
   | { type: 'UPDATE_USER_EMAIL'; payload: { id: string; email: string } }
@@ -519,12 +519,14 @@ function reduceState(state: AppState, action: Action): AppState {
     case 'APPLY_WEEKLY_MASTERS_TO_LESSONS': {
       // 「不可」はダミーIDで表現しているため、students の実IDとは区別する
       const BLOCKED_STUDENT_ID = '__blocked__'
-      const { effectiveFromDate } = action.payload
+      const { effectiveFromDate, effectiveToDate } = action.payload
 
-      // カレンダーで可能日（isLessonDay=true）かつ「更新日以降」だけ lessons を作り直す
-      // これにより過去の予定が巻き戻されるのを防ぐ
+      const inApplyRange = (date: string) =>
+        date >= effectiveFromDate && (!effectiveToDate || date <= effectiveToDate)
+
+      // カレンダーで可能日（isLessonDay=true）かつ反映期間内だけ lessons を作り直す
       const lessonDates = state.daySettings
-        .filter((s) => s.isLessonDay && s.date >= effectiveFromDate)
+        .filter((s) => s.isLessonDay && inApplyRange(s.date))
         .map((s) => s.date)
       const lessonDatesSet = new Set(lessonDates)
 
@@ -538,7 +540,7 @@ function reduceState(state: AppState, action: Action): AppState {
 
       for (const daySettings of state.daySettings) {
         if (!daySettings.isLessonDay) continue
-        if (daySettings.date < effectiveFromDate) continue
+        if (!inApplyRange(daySettings.date)) continue
 
         const [y, m, d] = daySettings.date.split('-').map(Number)
         const day_of_week = new Date(y, m - 1, d).getDay()

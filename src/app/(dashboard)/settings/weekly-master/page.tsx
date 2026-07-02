@@ -7,8 +7,8 @@ import { useApp, makeDefaultDaySettings } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import { createSupabaseClient } from '@/lib/supabase/client'
 import { fetchWeeklyMasters, persistWeeklyMasters } from '@/lib/supabase/sync'
-import { getLessonSlotList } from '@/lib/schedule'
-import { today } from '@/lib/schedule'
+import { getLessonSlotList, today } from '@/lib/schedule'
+import { getAcademicYearRange, formatAcademicYearLabel } from '@/lib/academic-year'
 import { WeeklyMaster } from '@/types'
 import Button from '@/components/ui/Button'
 
@@ -27,22 +27,6 @@ function key(day_of_week: number, slot_index: number) {
 }
 
 const BLOCKED_STUDENT_ID = '__blocked__'
-
-function getCurrentAcademicYearStart(baseDate: Date = new Date()): string {
-  const year = baseDate.getFullYear()
-  const month = baseDate.getMonth() + 1
-  const startYear = month >= 4 ? year : year - 1
-  return `${startYear}-04-01`
-}
-
-function getAcademicYearStartYearByDate(dateStr: string): number | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr)
-  if (!m) return null
-  const year = Number(m[1])
-  const month = Number(m[2])
-  if (!Number.isFinite(year) || !Number.isFinite(month)) return null
-  return month >= 4 ? year : year - 1
-}
 
 function buildMastersFromLocalMap(localMap: Record<string, string>): WeeklyMaster[] {
   const next: WeeklyMaster[] = []
@@ -69,7 +53,7 @@ function persistErrorMessage(err: unknown): string {
 
 export default function WeeklyMasterPage() {
   const { state, dispatch, saveToServer } = useApp()
-  const { students, weekly_masters, currentUser, daySettings } = state
+  const { students, weekly_masters, currentUser } = state
 
   const [localMap, setLocalMap] = useState<Record<string, string>>({})
   const [activeDayOfWeek, setActiveDayOfWeek] = useState<number>(() => new Date().getDay())
@@ -78,26 +62,10 @@ export default function WeeklyMasterPage() {
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [loadingFromServer, setLoadingFromServer] = useState(false)
-  const [deletePreviousYearOnApply, setDeletePreviousYearOnApply] = useState(false)
-  const currentAcademicStartYear = Number(getCurrentAcademicYearStart().slice(0, 4))
-  const deletionAcademicYears = Array.from(
-    new Set(
-      daySettings
-        .map((s) => getAcademicYearStartYearByDate(s.date))
-        .filter((y): y is number => y != null)
-        .concat(currentAcademicStartYear)
-    )
-  ).sort((a, b) => a - b)
-  const [deleteUntilAcademicStartYear, setDeleteUntilAcademicStartYear] = useState<number>(
-    deletionAcademicYears[deletionAcademicYears.length - 1] ?? currentAcademicStartYear
-  )
 
-  useEffect(() => {
-    if (deletionAcademicYears.length === 0) return
-    if (!deletionAcademicYears.includes(deleteUntilAcademicStartYear)) {
-      setDeleteUntilAcademicStartYear(deletionAcademicYears[deletionAcademicYears.length - 1])
-    }
-  }, [deletionAcademicYears, deleteUntilAcademicStartYear])
+  const defaultYearRange = getAcademicYearRange()
+  const [applyFromDate, setApplyFromDate] = useState(() => today())
+  const [applyToDate, setApplyToDate] = useState(() => defaultYearRange.end)
 
   useEffect(() => {
     const map: Record<string, string> = {}
@@ -212,21 +180,22 @@ export default function WeeklyMasterPage() {
     }
   }
 
-  /** 画面上の内容を状態に反映し、今日以降のカレンダー枠を作り直し、全体をサーバーへ同期 */
+  /** 週間マスターを指定期間のカレンダー枠に反映（期間外・過去データはそのまま残す） */
   const handleApplyToCalendar = () => {
-    const cutoffDate = `${deleteUntilAcademicStartYear + 1}-04-01`
+    if (applyFromDate > applyToDate) {
+      setFeedback({ ok: false, text: '反映期間の開始日は終了日以前にしてください。' })
+      return
+    }
     const next = buildMastersFromLocalMap(localMap)
     dispatch({ type: 'REPLACE_WEEKLY_MASTERS', payload: next })
-    if (deletePreviousYearOnApply) {
-      dispatch({ type: 'DELETE_DATA_BEFORE_DATE', payload: { cutoffDate } })
-    }
-    dispatch({ type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS', payload: { effectiveFromDate: today() } })
+    dispatch({
+      type: 'APPLY_WEEKLY_MASTERS_TO_LESSONS',
+      payload: { effectiveFromDate: applyFromDate, effectiveToDate: applyToDate },
+    })
     setSaveNonce((n) => n + 1)
     setFeedback({
       ok: true,
-      text: deletePreviousYearOnApply
-        ? `カレンダーに反映し、${deleteUntilAcademicStartYear}年度までのデータを削除しました（${cutoffDate}より前）。変更は数秒以内に Supabase へ同期されます。`
-        : 'カレンダーに反映しました。レッスン枠の変更は数秒以内に Supabase へ同期されます。',
+      text: `カレンダーに反映しました（${applyFromDate} 〜 ${applyToDate}）。この期間外のレッスンは変更しません。保存は数秒以内にサーバーへ同期されます。`,
     })
   }
 
@@ -270,30 +239,32 @@ export default function WeeklyMasterPage() {
           カレンダーに反映
         </Button>
         <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+          <span>反映期間</span>
           <input
-            type="checkbox"
-            checked={deletePreviousYearOnApply}
-            onChange={(e) => setDeletePreviousYearOnApply(e.target.checked)}
-            className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+            type="date"
+            value={applyFromDate}
+            onChange={(e) => setApplyFromDate(e.target.value)}
+            className="border border-gray-300 rounded-lg px-2 py-1 text-sm bg-white"
           />
-          年度更新時に前年度データを削除する
+          <span>〜</span>
+          <input
+            type="date"
+            value={applyToDate}
+            onChange={(e) => setApplyToDate(e.target.value)}
+            className="border border-gray-300 rounded-lg px-2 py-1 text-sm bg-white"
+          />
         </label>
-        {deletePreviousYearOnApply && (
-          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-            <span>削除対象</span>
-            <select
-              value={deleteUntilAcademicStartYear}
-              onChange={(e) => setDeleteUntilAcademicStartYear(Number(e.target.value))}
-              className="border border-gray-300 rounded-lg px-2 py-1 text-sm bg-white"
-            >
-              {deletionAcademicYears.map((y) => (
-                <option key={y} value={y}>
-                  {y}年度まで
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+        <button
+          type="button"
+          className="text-xs text-indigo-600 hover:underline"
+          onClick={() => {
+            const r = getAcademicYearRange()
+            setApplyFromDate(r.start)
+            setApplyToDate(r.end)
+          }}
+        >
+          今年度（{formatAcademicYearLabel(defaultYearRange.start, defaultYearRange.end)}）をセット
+        </button>
         {feedback && (
           <span
             className={`text-sm font-medium ${feedback.ok ? 'text-emerald-600' : 'text-red-600'}`}
@@ -303,11 +274,11 @@ export default function WeeklyMasterPage() {
           </span>
         )}
       </div>
-      {deletePreviousYearOnApply && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">
-          「カレンダーに反映」を押すと、選択した年度まで（例: 2025年度まで → 2026-04-01より前）の day settings・レッスン・伴奏可能枠を削除します。
-        </p>
-      )}
+      <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4 leading-relaxed">
+        反映期間の<strong>外</strong>のレッスン（過去分を含む）はデータとして残り、上書きしません。
+        レッスン回数は年度（4月1日〜翌3月31日）ごとに自動で区切られ、3月終了時にデータを削除せずカウントだけ新年度に切り替わります。
+        Google カレンダー同期は同期ボタンを押した日以降のみ対象です。
+      </p>
 
       <div className="space-y-6">
         <div className="flex flex-wrap items-center gap-2">
