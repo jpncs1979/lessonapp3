@@ -6,7 +6,7 @@ import {
   LessonStatus, EndTimeMode, Student, Accompanist, WeeklyMaster
 } from '@/types'
 import { generateId, normalizePendingToConfirmed } from '@/lib/utils'
-import { today, formatDateToYYYYMMDD, generateTimeItems } from '@/lib/schedule'
+import { today, formatDateToYYYYMMDD, generateTimeItems, enumerateDateRange } from '@/lib/schedule'
 import { createSupabaseClient } from '@/lib/supabase/client'
 import {
   getAppUserFromSession,
@@ -524,11 +524,30 @@ function reduceState(state: AppState, action: Action): AppState {
       const inApplyRange = (date: string) =>
         date >= effectiveFromDate && (!effectiveToDate || date <= effectiveToDate)
 
-      // カレンダーで可能日（isLessonDay=true）かつ反映期間内だけ lessons を作り直す
-      const lessonDates = state.daySettings
-        .filter((s) => s.isLessonDay && inApplyRange(s.date))
-        .map((s) => s.date)
-      const lessonDatesSet = new Set(lessonDates)
+      const activeWeekdays = new Set(state.weekly_masters.map((w) => w.day_of_week))
+
+      // 反映期間内で週間マスターに該当する曜日 → 実施日にする（未設定だと枠が作られない）
+      const applyEnd = effectiveToDate ?? effectiveFromDate
+      const targetDates = enumerateDateRange(effectiveFromDate, applyEnd).filter((dateStr) => {
+        const [y, m, d] = dateStr.split('-').map(Number)
+        const day_of_week = new Date(y, m - 1, d).getDay()
+        return activeWeekdays.has(day_of_week)
+      })
+      const lessonDatesSet = new Set(targetDates)
+
+      const daySettingsByDate = new Map(state.daySettings.map((s) => [s.date, s]))
+      let nextDaySettings = [...state.daySettings]
+      for (const dateStr of targetDates) {
+        const prev = daySettingsByDate.get(dateStr) ?? makeDefaultDaySettings(dateStr)
+        if (prev.isLessonDay) continue
+        const next = { ...prev, isLessonDay: true }
+        if (daySettingsByDate.has(dateStr)) {
+          nextDaySettings = nextDaySettings.map((s) => (s.date === dateStr ? next : s))
+        } else {
+          nextDaySettings.push(next)
+        }
+        daySettingsByDate.set(dateStr, next)
+      }
 
       // day_of_week + slot_index(0-based) -> student_id の辞書
       const wmMap = new Map<string, string>()
@@ -538,15 +557,11 @@ function reduceState(state: AppState, action: Action): AppState {
 
       const rebuilt: LessonSlot[] = []
 
-      for (const daySettings of state.daySettings) {
-        if (!daySettings.isLessonDay) continue
-        if (!inApplyRange(daySettings.date)) continue
-
-        const [y, m, d] = daySettings.date.split('-').map(Number)
+      for (const dateStr of targetDates) {
+        const daySettings = daySettingsByDate.get(dateStr)!
+        const [y, m, d] = dateStr.split('-').map(Number)
         const day_of_week = new Date(y, m - 1, d).getDay()
 
-        // 既存 lessons を使わずに generateTimeItems の基本スロットを作り、
-        // 週間マスターで status/studentId を上書きする（更新日は「未割当て」に戻せるように、予約済み枠も含めて上書きする）
         const items = generateTimeItems(daySettings.date, daySettings, [])
         for (const item of items) {
           if (item.type !== 'slot' || !item.slot) continue
@@ -567,7 +582,7 @@ function reduceState(state: AppState, action: Action): AppState {
 
       // 対象日付の既存 lessons を全置換
       const remaining = state.lessons.filter((l) => !lessonDatesSet.has(l.date))
-      return { ...state, lessons: [...remaining, ...rebuilt] }
+      return { ...state, daySettings: nextDaySettings, lessons: [...remaining, ...rebuilt] }
     }
 
     case 'DELETE_DATA_BEFORE_DATE': {

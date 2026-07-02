@@ -195,6 +195,20 @@ export function formatDateToYYYYMMDD(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+/** from〜to（含む）の日付を YYYY-MM-DD の配列で返す */
+export function enumerateDateRange(from: string, to: string): string[] {
+  const [y1, m1, d1] = from.split('-').map(Number)
+  const [y2, m2, d2] = to.split('-').map(Number)
+  const cur = new Date(y1, m1 - 1, d1)
+  const end = new Date(y2, m2 - 1, d2)
+  const out: string[] = []
+  while (cur.getTime() <= end.getTime()) {
+    out.push(formatDateToYYYYMMDD(cur))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return out
+}
+
 /** YYYY-MM-DD形式の日付文字列から表示用に変換（ローカルで解釈） */
 export function formatDate(dateStr: string, options?: Intl.DateTimeFormatOptions): string {
   const [y, m, d] = dateStr.split('-').map(Number)

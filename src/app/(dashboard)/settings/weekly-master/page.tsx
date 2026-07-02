@@ -275,9 +275,8 @@ export default function WeeklyMasterPage() {
         )}
       </div>
       <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-4 leading-relaxed">
-        反映期間の<strong>外</strong>のレッスン（過去分を含む）はデータとして残り、上書きしません。
-        レッスン回数は年度（4月1日〜翌3月31日）ごとに自動で区切られ、3月終了時にデータを削除せずカウントだけ新年度に切り替わります。
-        Google カレンダー同期は同期ボタンを押した日以降のみ対象です。
+        「カレンダーに反映」すると、反映期間内で<strong>週間マスターに登録がある曜日</strong>が自動で実施日（レッスン日）になり、枠が作成されます（事前に月カレンダーで実施日にしなくても大丈夫です）。
+        反映期間の<strong>外</strong>のレッスンは変更しません。レッスン回数は年度（4月1日〜翌3月31日）ごとに自動で区切られます。
       </p>
 
       <div className="space-y-6">
